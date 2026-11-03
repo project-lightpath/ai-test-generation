@@ -76,7 +76,7 @@ class ContractIntegrityTests(unittest.TestCase):
         documents = [document for document in documents if document.get("execution_id") != "execution-base"]
         with self.assertRaises(ContractIntegrityError) as raised:
             validate_documents(documents)
-        self.assertIn("differential.base_execution_id references missing", str(raised.exception))
+        self.assertIn("differential.base_execution_id references missing atg.execution/execution-base", raised.exception.errors)
 
     def test_cross_run_reference_is_rejected(self):
         documents = graph_documents()
@@ -84,14 +84,22 @@ class ContractIntegrityTests(unittest.TestCase):
         generation["run_id"] = "run-2"
         with self.assertRaises(ContractIntegrityError) as raised:
             validate_documents(documents)
-        self.assertIn("execution.generation_id belongs to a different run", str(raised.exception))
+        self.assertIn("execution.generation_id belongs to a different run", raised.exception.errors)
 
     def test_duplicate_typed_document_id_is_rejected(self):
         documents = graph_documents()
         documents.append(dict(next(document for document in documents if document.get("plan_id") == "plan-1")))
         with self.assertRaises(ContractIntegrityError) as raised:
             validate_documents(documents)
-        self.assertIn("duplicate document: atg.plan/plan-1", str(raised.exception))
+        self.assertIn("duplicate document: atg.plan/plan-1", raised.exception.errors)
+
+    def test_known_contract_without_typed_id_is_rejected(self):
+        documents = graph_documents()
+        execution = next(document for document in documents if document.get("execution_id") == "execution-base")
+        del execution["execution_id"]
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("every document requires a contract and typed identifier", raised.exception.errors)
 
 
 if __name__ == "__main__":

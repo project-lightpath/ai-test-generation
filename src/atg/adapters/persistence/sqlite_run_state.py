@@ -132,10 +132,28 @@ class SQLiteRunStateStore:
             yield RunEvent(**json.loads(row["payload_json"]))
 
     def replay(self, run_id: str) -> RunState:
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                event_rows = list(self._connection.execute(
+                    "SELECT payload_json FROM run_events WHERE run_id = ? ORDER BY applied_revision",
+                    (run_id,),
+                ))
+                snapshot_row = self._connection.execute(
+                    "SELECT state_json FROM runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+                if snapshot_row is None:
+                    raise KeyError(run_id)
+                snapshot = RunState.from_document(json.loads(snapshot_row["state_json"]))
+                self._connection.execute("COMMIT")
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
         state = RunState.initial(run_id)
-        for event in self.events(run_id):
+        for row in event_rows:
+            event = RunEvent(**json.loads(row["payload_json"]))
             state = state.apply(event).state
-        snapshot = self.get_run(run_id)
         if state.revision != snapshot.revision:
             raise RuntimeError("run snapshot and event journal diverged")
         if state.revision and state.to_document() != snapshot.to_document():

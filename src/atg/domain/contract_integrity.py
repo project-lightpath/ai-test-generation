@@ -152,8 +152,8 @@ def _document_id(document: Mapping[str, object]) -> str | None:
         "atg.run_event": "event_id",
     }
     preferred = contract_fields.get(document.get("contract"))
-    if preferred and isinstance(document.get(preferred), str):
-        return document[preferred]
+    if preferred:
+        return document[preferred] if isinstance(document.get(preferred), str) else None
     for field in (
         "request_id",
         "evidence_id",

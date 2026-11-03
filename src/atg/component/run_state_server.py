@@ -14,13 +14,19 @@ from urllib.parse import unquote, urlsplit
 
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.domain.run_state import (
-    DuplicateEventError,
-    InvalidTransitionError,
     RunEvent,
     RunStateError,
-    StaleEventError,
-    SupersessionError,
 )
+
+MAX_REQUEST_BYTES = 1024 * 1024
+
+
+class BadRequestError(ValueError):
+    """Raised when an HTTP request is malformed."""
+
+
+class RequestTooLargeError(ValueError):
+    """Raised when an HTTP request exceeds the component limit."""
 
 
 def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int = 0):
@@ -47,13 +53,23 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
             try:
                 body = self._body()
                 if parts == ["runs"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("request body must be a JSON object")
+                    if not body.get("run_id") or not body.get("created_at"):
+                        raise BadRequestError("run creation requires run_id and created_at")
                     state = store.create_run(body["run_id"], body["created_at"])
                     self._respond(201, state.to_document())
                     return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
+                    if not isinstance(body, dict):
+                        raise BadRequestError("request body must be a JSON object")
                     event_payload = dict(body)
-                    event_payload.pop("contract", None)
-                    event_payload.pop("version", None)
+                    if event_payload.pop("contract", None) != "atg.run_event":
+                        self._respond(400, {"error": "unsupported event contract"})
+                        return
+                    if event_payload.pop("version", None) != "1.0":
+                        self._respond(400, {"error": "unsupported event version"})
+                        return
                     if event_payload.get("run_id") != parts[1]:
                         self._respond(400, {"error": "event run_id does not match URL"})
                         return
@@ -61,17 +77,35 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     self._respond(200, {"duplicate": result.duplicate, "state": result.state.to_document()})
                     return
                 self._respond(404, {"error": "not found"})
-            except KeyError as exc:
-                self._respond(400, {"error": f"missing field: {exc.args[0]}"})
-            except (ValueError, RunStateError) as exc:
+            except KeyError:
+                self._respond(404, {"error": "run not found"})
+            except BadRequestError as exc:
+                self._respond(400, {"error": str(exc)})
+            except RequestTooLargeError as exc:
+                self._respond(413, {"error": str(exc)})
+            except TypeError:
+                self._respond(400, {"error": "invalid event payload"})
+            except RunStateError as exc:
                 self._respond(409, {"error": str(exc)})
 
         def _parts(self):
             return [unquote(part) for part in urlsplit(self.path).path.strip("/").split("/") if part]
 
         def _body(self):
-            length = int(self.headers.get("Content-Length", "0"))
-            return json.loads(self.rfile.read(length))
+            raw_length = self.headers.get("Content-Length")
+            try:
+                length = int(raw_length) if raw_length is not None else 0
+            except ValueError as exc:
+                raise BadRequestError("Content-Length must be an integer") from exc
+            if length < 0:
+                raise BadRequestError("Content-Length cannot be negative")
+            if length > MAX_REQUEST_BYTES:
+                raise RequestTooLargeError(f"request body exceeds {MAX_REQUEST_BYTES} bytes")
+            try:
+                body = json.loads(self.rfile.read(length))
+            except json.JSONDecodeError as exc:
+                raise BadRequestError("request body must contain valid JSON") from exc
+            return body
 
         def _respond(self, status, payload):
             encoded = json.dumps(payload, sort_keys=True).encode("utf-8")

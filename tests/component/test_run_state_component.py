@@ -1,4 +1,5 @@
 import json
+import http.client
 import pathlib
 import sys
 from tempfile import TemporaryDirectory
@@ -10,7 +11,7 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore  # noqa: E402
-from atg.component.run_state_server import create_server  # noqa: E402
+from atg.component.run_state_server import MAX_REQUEST_BYTES, create_server  # noqa: E402
 from atg.domain.run_state import DuplicateEventError, RunEvent, StaleEventError  # noqa: E402
 
 
@@ -155,6 +156,9 @@ class RunStateHTTPComponentTests(unittest.TestCase):
 
     def request(self, method, path, payload=None):
         data = None if payload is None else json.dumps(payload).encode()
+        return self.raw_request(method, path, data)
+
+    def raw_request(self, method, path, data):
         request = Request(f"{self.base_url}{path}", data=data, method=method)
         request.add_header("Content-Type", "application/json")
         with urlopen(request) as response:
@@ -197,10 +201,75 @@ class RunStateHTTPComponentTests(unittest.TestCase):
         except HTTPError as error:
             self.assertEqual(error.code, 409)
             body = json.loads(error.read())
-            self.assertIn("expects revision 0", body["error"])
+            self.assertEqual(
+                body,
+                {"error": "event expects revision 0, current revision is 1"},
+            )
             error.close()
         else:
             self.fail("stale event should return HTTP 409")
+
+    def test_event_ingress_rejects_bad_contract_version_and_malformed_payloads(self):
+        self.request("POST", "/runs", {"run_id": "run-http", "created_at": "2026-11-03T17:00:00Z"})
+        event = admit_event(run_id="run-http")
+        payload = {"contract": "atg.wrong", "version": "1.0", **event.__dict__}
+        for field, expected in (("contract", "unsupported event contract"), ("version", "unsupported event version")):
+            invalid = {**payload, field: "wrong"}
+            if field == "version":
+                invalid["contract"] = "atg.run_event"
+            try:
+                self.request("POST", "/runs/run-http/events", invalid)
+            except HTTPError as error:
+                self.assertEqual(error.code, 400)
+                self.assertEqual(json.loads(error.read()), {"error": expected})
+                error.close()
+            else:
+                self.fail(f"invalid {field} should return HTTP 400")
+
+        missing_id = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
+        del missing_id["event_id"]
+        try:
+            self.request("POST", "/runs/run-http/events", missing_id)
+        except HTTPError as error:
+            self.assertEqual(error.code, 400)
+            self.assertEqual(json.loads(error.read()), {"error": "invalid event payload"})
+            error.close()
+        else:
+            self.fail("malformed event should return HTTP 400")
+
+        try:
+            self.raw_request("POST", "/runs/run-http/events", b"{")
+        except HTTPError as error:
+            self.assertEqual(error.code, 400)
+            self.assertEqual(json.loads(error.read()), {"error": "request body must contain valid JSON"})
+            error.close()
+        else:
+            self.fail("invalid JSON should return HTTP 400")
+
+    def test_event_ingress_rejects_unknown_run_and_oversized_body(self):
+        event = admit_event(run_id="missing-run")
+        payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
+        try:
+            self.request("POST", "/runs/missing-run/events", payload)
+        except HTTPError as error:
+            self.assertEqual(error.code, 404)
+            self.assertEqual(json.loads(error.read()), {"error": "run not found"})
+            error.close()
+        else:
+            self.fail("unknown run should return HTTP 404")
+
+        connection = http.client.HTTPConnection(*self.server.server_address)
+        connection.putrequest("POST", "/runs/missing-run/events")
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Content-Length", str(MAX_REQUEST_BYTES + 1))
+        connection.endheaders()
+        response = connection.getresponse()
+        self.assertEqual(response.status, 413)
+        self.assertEqual(
+            json.loads(response.read()),
+            {"error": "request body exceeds 1048576 bytes"},
+        )
+        connection.close()
 
 
 if __name__ == "__main__":

@@ -36,6 +36,14 @@
       "then": { "required": ["decision"] }
     },
     {
+      "if": { "properties": { "state": { "const": "approved" } } },
+      "then": { "properties": { "decision": { "properties": { "value": { "const": "approved" } } } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "rejected" } } },
+      "then": { "properties": { "decision": { "properties": { "value": { "const": "rejected" } } } } }
+    },
+    {
       "if": { "properties": { "state": { "const": "superseded" } } },
       "then": { "required": ["superseded_by"] }
     },

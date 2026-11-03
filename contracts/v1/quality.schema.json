@@ -29,5 +29,21 @@
     },
     "outcome": { "$ref": "common.schema.json#/$defs/outcome" },
     "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "enum": ["validated", "reproduced", "fixed_behavior"] } } },
+      "then": {
+        "properties": {
+          "checks": {
+            "contains": {
+              "type": "object",
+              "required": ["status"],
+              "properties": { "status": { "const": "pass" } }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

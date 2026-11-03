@@ -1,7 +1,8 @@
 # SSC Development Harness
 
 The SSC demo is the first execution host for ATG, not the source of ATG test
-SSC demo's `agentic-test-generation` pipeline and `ai-generate-tests` task.
+contracts or architecture. The ATG implementation replaces the SSC demo's
+`agentic-test-generation` pipeline and `ai-generate-tests` task.
 
 ## Reuse From SSC
 

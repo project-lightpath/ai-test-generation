@@ -8,6 +8,7 @@ fingerprint in the same transaction as its workflow journal.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 import hashlib
 import json
 from typing import Mapping
@@ -153,7 +154,13 @@ class RunState:
         elif event.event_type == "cancel":
             if not event.reason:
                 raise InvalidTransitionError("cancellation requires a reason")
-            next_state = self._replace(event, status="cancelled", terminal_reason=event.reason)
+            next_state = self._replace(
+                event,
+                status="cancelled",
+                terminal_reason=event.reason,
+                active_checkpoint_id=None,
+                active_checkpoint_expires_at=None,
+            )
         elif event.event_type == "checkpoint_expired":
             next_state = self._expire_checkpoint(event)
         else:
@@ -165,10 +172,16 @@ class RunState:
                 raise InvalidTransitionError(
                     f"cannot apply {event.event_type!r} while run is {self.status!r}"
                 ) from exc
+            clear_checkpoint = event.event_type == "retry_requested" or next_status in self._TERMINAL
             next_state = self._replace(
                 event,
                 status=next_status,
                 terminal_reason=None if event.event_type == "retry_requested" else self.terminal_reason,
+                **(
+                    {"active_checkpoint_id": None, "active_checkpoint_expires_at": None}
+                    if clear_checkpoint
+                    else {}
+                ),
             )
 
         fingerprints = dict(self.event_fingerprints)
@@ -212,7 +225,9 @@ class RunState:
     def _expire_checkpoint(self, event: RunEvent) -> "RunState":
         if self.active_checkpoint_id is None or event.checkpoint_id != self.active_checkpoint_id:
             raise SupersessionError("expiration does not target the active checkpoint")
-        if self.active_checkpoint_expires_at and event.occurred_at < self.active_checkpoint_expires_at:
+        if self.active_checkpoint_expires_at and _parse_timestamp(event.occurred_at) < _parse_timestamp(
+            self.active_checkpoint_expires_at
+        ):
             raise InvalidTransitionError("checkpoint cannot expire before its deadline")
         return self._replace(
             event,
@@ -259,20 +274,24 @@ class RunState:
 
         if not self.updated_at:
             raise ValueError("updated_at is required to serialize run state")
-        return {
+        document = {
             "contract": "atg.run_state",
             "version": "1.0",
             "run_id": self.run_id,
             "status": self.status,
             "revision": self.revision,
             "updated_at": self.updated_at,
-            "active_checkpoint_id": self.active_checkpoint_id,
-            "active_checkpoint_expires_at": self.active_checkpoint_expires_at,
             "superseded_checkpoint_ids": list(self.superseded_checkpoint_ids),
             "processed_event_ids": list(self.processed_event_ids),
             "event_fingerprints": dict(self.event_fingerprints),
+        }
+        optional = {
+            "active_checkpoint_id": self.active_checkpoint_id,
+            "active_checkpoint_expires_at": self.active_checkpoint_expires_at,
             "terminal_reason": self.terminal_reason,
         }
+        document.update({key: value for key, value in optional.items() if value is not None})
+        return document
 
     @classmethod
     def from_document(cls, document: Mapping[str, object]) -> "RunState":
@@ -314,3 +333,13 @@ class RunState:
 def _fingerprint(event: RunEvent) -> str:
     payload = json.dumps(event.__dict__, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _parse_timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise InvalidTransitionError(f"invalid timestamp: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise InvalidTransitionError(f"timestamp must include a UTC offset: {value!r}")
+    return parsed

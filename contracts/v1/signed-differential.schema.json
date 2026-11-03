@@ -46,5 +46,21 @@
       }
     },
     "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "enum": ["validated", "reproduced", "fixed_behavior"] } } },
+      "then": {
+        "properties": {
+          "comparisons": {
+            "contains": {
+              "type": "object",
+              "required": ["classification"],
+              "properties": { "classification": { "enum": ["same", "changed"] } }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

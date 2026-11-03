@@ -191,11 +191,27 @@ class RunStateTests(unittest.TestCase):
         state = state.apply(
             event(
                 "run-1", "e3", 2, "checkpoint_expired", checkpoint_id="cp-1",
-                occurred_at="2026-11-03T17:10:01Z",
+                occurred_at="2026-11-03T17:10:00.5Z",
             )
         ).state
         self.assertEqual(state.status, "admitted")
         self.assertIsNone(state.active_checkpoint_id)
+
+        naive = RunState.initial("run-2")
+        naive = naive.apply(event("run-2", "e1", 0, "admit")).state
+        naive = naive.apply(
+            event(
+                "run-2", "e2", 1, "checkpoint_created", checkpoint_id="cp-2",
+                checkpoint_kind="plan_review", expires_at="2026-11-03T17:10:00Z",
+            )
+        ).state
+        with self.assertRaises(InvalidTransitionError):
+            naive.apply(
+                event(
+                    "run-2", "e3", 2, "checkpoint_expired", checkpoint_id="cp-2",
+                    occurred_at="2026-11-03T17:10:01",
+                )
+            )
 
     def test_blocked_run_can_be_explicitly_retried(self):
         state = RunState.initial("run-1")
@@ -278,9 +294,18 @@ class RunStateTests(unittest.TestCase):
         }
         for event_type, expected_status in expected.items():
             with self.subTest(event_type=event_type):
-                state = RunState(run_id="run-1", status="quality_review", revision=0, updated_at="2026-11-03T17:00:00Z")
+                state = RunState(
+                    run_id="run-1",
+                    status="quality_review",
+                    revision=0,
+                    updated_at="2026-11-03T17:00:00Z",
+                    active_checkpoint_id="checkpoint-quality",
+                    active_checkpoint_expires_at="2026-11-04T17:00:00Z",
+                )
                 result = state.apply(event("run-1", "e1", 0, event_type, reason="quality evidence"))
                 self.assertEqual(result.state.status, expected_status)
+                self.assertIsNone(result.state.active_checkpoint_id)
+                self.assertIsNone(result.state.active_checkpoint_expires_at)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,12 @@ enable_free_tier: true
 reviews:
   profile: "assertive"
   high_level_summary: true
+  high_level_summary_instructions: |
+    Review the pull request as one cohesive change set. Produce a consolidated
+    summary covering architecture, contract/state compatibility, tests, CI,
+    security, and unresolved follow-up work. Group related findings and avoid
+    repeating the same issue across files. Prioritize correctness,
+    regressions, data loss, security, and meaningful test gaps over style.
   poem: false
   auto_review:
     enabled: true
@@ -18,60 +24,43 @@ reviews:
     - "!**/generated/**"
     - "!_site/**"
   path_instructions:
-    - path: "contracts/**/*.json"
+    - path: "**"
       instructions: |
-        Review JSON Schema Draft 2020-12 correctness, stable $id and $ref
-        behavior, required fields, additionalProperties, discriminators,
-        explicit blocked/inconclusive/not_reached/stated_gap outcomes, and
-        compatibility implications. Do not infer success from missing
-        evidence. Preserve source, artifact, command, environment, model,
-        worker, tool, reviewer, and authorization identities where evidence
-        depends on them.
-    - path: "contracts/examples/**"
+        Review the complete change set in repository context rather than files
+        in isolation. Check that public contracts, implementation, persistence,
+        tests, documentation, and CI agree. Prefer explicit, fail-closed
+        behavior; preserve evidence and identity; validate untrusted input at
+        boundaries; and flag unsupported success states, data loss, ambiguous
+        outcomes, unsafe concurrency, or weak error semantics.
+    - path: "contracts/**"
       instructions: |
-        Verify examples are schema-valid, internally consistent, useful for
-        cross-document integrity tests, and free of credentials, customer data,
-        or authoritative VEX content.
-    - path: "contracts/overrides/**"
+        Review schema correctness, compatibility, cross-document consistency,
+        examples, negative fixtures, and override behavior. Require explicit
+        non-success outcomes and supporting evidence for positive outcomes.
+        Ensure serialized producer output can validate against these contracts.
+    - path: "src/atg/**/*.py"
       instructions: |
-        Treat override files as complete destructive-development schema
-        replacements, not patches. Check that the profile is explicit and does
-        not silently change the default consumer contract.
-    - path: "src/atg/domain/**/*.py"
-      instructions: |
-        Review run-state transitions, revision compare-and-swap semantics,
-        event-id/payload-digest idempotency, checkpoint supersession and
-        expiry, retry/recovery behavior, terminal outcomes, and cross-document
-        integrity. Look for invalid transitions that can be accepted or valid
-        evidence states that can be skipped.
-    - path: "src/atg/adapters/**/*.py"
-      instructions: |
-        Review transaction boundaries, persistence/replay correctness,
-        concurrency safety, resource lifecycle, untrusted input handling, and
-        whether development adapters accidentally become production contracts.
-    - path: "src/atg/component/**/*.py"
-      instructions: |
-        Review HTTP status and error semantics, input validation, process
-        lifecycle, concurrency behavior, and whether the component exposes the
-        same observable contract as the service boundary.
+        Review lifecycle invariants, typed boundaries, idempotency, revision and
+        transaction semantics, persistence/replay consistency, concurrency,
+        recovery, resource lifecycle, and stable structured errors. Verify that
+        terminal and retry behavior cannot retain stale state.
     - path: "tests/**/*.py"
       instructions: |
-        Check meaningful assertions rather than existence-only or tautological
-        checks. Require success, negative, boundary, stale, duplicate,
-        concurrency, persistence/replay, and recovery coverage where relevant.
-        Flag discarded return values, conditional no-op assertions, and tests
-        that do not verify the claimed behavior.
-    - path: "scripts/**/*.py"
+        Require meaningful assertions on complete values and structures rather
+        than existence, broad truthiness, or substring-only checks. Check
+        positive, negative, boundary, stale, duplicate, concurrency,
+        persistence, replay, and recovery behavior where relevant. Ensure tests
+        prove the behavior they claim and fail when that behavior regresses.
+    - path: "scripts/**"
       instructions: |
-        Review deterministic schema validation/publication, safe path handling,
-        complete override selection, reproducible catalogs/checksums, and clear
-        failures for invalid fixtures or unresolved references.
+        Review deterministic validation and publication, safe path handling,
+        reproducible outputs, explicit configuration selection, and clear
+        failures for missing or invalid inputs.
     - path: ".github/workflows/**"
       instructions: |
-        Review least-privilege permissions, pull-request behavior, reproducible
-        dependency installation, artifact naming across reruns, Pages
-        deployment prerequisites, secret exposure, and action pinning or
-        versioning risks.
+        Review least-privilege permissions, trigger and branch restrictions,
+        reproducible dependencies, rerun-safe artifacts, secret exposure,
+        deployment prerequisites, and action versioning risks.
 
 chat:
   auto_reply: true

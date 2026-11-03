@@ -21,7 +21,7 @@ EXAMPLES = {
     "run-state": "run-state.json",
     "run-event": "run-event-checkpoint.json",
     "checkpoint": "checkpoint.json",
-    "execution": "execution.json",
+    "execution": ["execution.json", "execution-base.json"],
     "quality": "quality.json",
     "provenance": "provenance.json",
     "preflight": "preflight.json",
@@ -55,24 +55,32 @@ def validate_contracts(
     invalid_root: Path,
     override_root: Path | None = None,
 ) -> dict[str, dict]:
+    if override_root is not None and not override_root.is_dir():
+        raise FileNotFoundError(f"override profile does not exist: {override_root}")
     schemas = load_schema_documents(schema_root, override_root)
     for name, schema in schemas.items():
         Draft202012Validator.check_schema(schema)
         validator_for(name, schemas)
 
-    for name, filename in EXAMPLES.items():
-        validator_for(name, schemas).validate(json.loads((examples_root / filename).read_text()))
+    for name, filenames in EXAMPLES.items():
+        for filename in ([filenames] if isinstance(filenames, str) else filenames):
+            validator_for(name, schemas).validate(json.loads((examples_root / filename).read_text()))
     validator_for("compatibility", schemas).validate(
         json.loads((compatibility_root / "v1-run-state.json").read_text())
     )
 
-    invalid_event = json.loads((invalid_root / "run-event-missing-decision.json").read_text())
-    try:
-        validator_for("run-event", schemas).validate(invalid_event)
-    except ValidationError:
-        pass
-    else:
-        raise AssertionError("invalid run-event fixture unexpectedly validated")
+    invalid_fixtures = {
+        "run-event": "run-event-missing-decision.json",
+        "signed-differential": "signed-differential-no-supporting-comparison.json",
+    }
+    for name, filename in invalid_fixtures.items():
+        invalid_document = json.loads((invalid_root / filename).read_text())
+        try:
+            validator_for(name, schemas).validate(invalid_document)
+        except ValidationError:
+            pass
+        else:
+            raise AssertionError(f"invalid {name} fixture unexpectedly validated")
     return schemas
 
 
