@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlsplit
 
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.domain.run_state import (
+    InvalidEventError,
     RunEvent,
     RunStateError,
 )
@@ -85,6 +86,8 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 self._respond(413, {"error": str(exc)})
             except TypeError:
                 self._respond(400, {"error": "invalid event payload"})
+            except InvalidEventError as exc:
+                self._respond(400, {"error": str(exc)})
             except RunStateError as exc:
                 self._respond(409, {"error": str(exc)})
 

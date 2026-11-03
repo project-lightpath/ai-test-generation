@@ -4,12 +4,15 @@
   "title": "ATG signed differential result",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "differential_id", "run_id", "base_execution_id", "candidate_execution_id", "outcome", "comparisons", "provenance_id", "signature"],
+  "required": ["contract", "version", "differential_id", "run_id", "request_id", "base_execution_id", "candidate_execution_id", "outcome", "comparisons", "quality_id", "provenance_id", "review_and_signoff"],
   "properties": {
     "contract": { "const": "atg.signed_differential" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
     "differential_id": { "$ref": "common.schema.json#/$defs/id" },
     "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "request_id": { "$ref": "common.schema.json#/$defs/id" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/id" },
+    "generation_id": { "$ref": "common.schema.json#/$defs/id" },
     "base_execution_id": { "$ref": "common.schema.json#/$defs/id" },
     "candidate_execution_id": { "$ref": "common.schema.json#/$defs/id" },
     "outcome": { "$ref": "common.schema.json#/$defs/outcome" },
@@ -31,6 +34,41 @@
     },
     "quality_id": { "$ref": "common.schema.json#/$defs/id" },
     "provenance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "test_artifacts": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/artifact" } },
+    "test_equivalence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification"],
+      "properties": {
+        "classification": { "enum": ["exact", "equivalent", "different", "inconclusive"] },
+        "base_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+        "candidate_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+        "reason": { "type": "string" }
+      }
+    },
+    "environment_comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base", "candidate", "matched"],
+      "properties": {
+        "base": { "$ref": "common.schema.json#/$defs/identity" },
+        "candidate": { "$ref": "common.schema.json#/$defs/identity" },
+        "matched": { "type": "boolean" },
+        "differences": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "review_and_signoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewer", "decision", "decided_at", "limitations_acknowledged"],
+      "properties": {
+        "reviewer": { "$ref": "common.schema.json#/$defs/reviewer" },
+        "decision": { "enum": ["approved", "rejected", "needs_human_review"] },
+        "decided_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "limitations_acknowledged": { "type": "boolean" },
+        "rationale": { "type": "string" }
+      }
+    },
     "signature": {
       "type": "object",
       "additionalProperties": false,
@@ -43,6 +81,17 @@
         "public_key_ref": { "$ref": "common.schema.json#/$defs/id" },
         "value": { "type": "string", "minLength": 1 },
         "signed_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "payload_type", "verification_status"],
+      "properties": {
+        "format": { "enum": ["dsse", "in_toto", "other"] },
+        "payload_type": { "type": "string", "minLength": 1 },
+        "verification_status": { "enum": ["verified", "unverified", "failed", "not_available"] },
+        "verification_ref": { "$ref": "common.schema.json#/$defs/id" }
       }
     },
     "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }

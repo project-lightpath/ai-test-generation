@@ -23,6 +23,14 @@ python3 -m venv .venv
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ```
 
+The CI workflow runs the same suite by layer:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/unit -p 'test_*.py' -v
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/contract -p 'test_*.py' -v
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests/component -p 'test_*.py' -v
+```
+
 The test suite checks real JSON Schema examples and invalid fixtures, then
 exercises run-state idempotency, stale-event rejection, checkpoint
 supersession/expiry, retry recovery, SQLite replay, and the HTTP component

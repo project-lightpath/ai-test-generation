@@ -10,7 +10,7 @@
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
     "checkpoint_id": { "$ref": "common.schema.json#/$defs/id" },
     "run_id": { "$ref": "common.schema.json#/$defs/id" },
-    "kind": { "enum": ["plan_review", "code_review", "execution_review", "quality_review"] },
+    "kind": { "enum": ["analysis_review", "plan_review", "code_review", "execution_review", "quality_review"] },
     "revision": { "type": "integer", "minimum": 0 },
     "state": { "enum": ["pending", "approved", "rejected", "expired", "superseded"] },
     "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },

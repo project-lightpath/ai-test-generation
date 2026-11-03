@@ -246,6 +246,29 @@ class RunStateHTTPComponentTests(unittest.TestCase):
         else:
             self.fail("invalid JSON should return HTTP 400")
 
+        invalid_value = {"contract": "atg.run_event", "version": "1.0", **event.__dict__, "event_id": ""}
+        try:
+            self.request("POST", "/runs/run-http/events", invalid_value)
+        except HTTPError as error:
+            self.assertEqual(error.code, 400)
+            self.assertEqual(
+                json.loads(error.read()),
+                {"error": "event_id, run_id, and event_type are required strings"},
+            )
+            error.close()
+        else:
+            self.fail("empty event ID should return HTTP 400")
+
+        invalid_timestamp = {"contract": "atg.run_event", "version": "1.0", **event.__dict__, "occurred_at": 12345}
+        try:
+            self.request("POST", "/runs/run-http/events", invalid_timestamp)
+        except HTTPError as error:
+            self.assertEqual(error.code, 400)
+            self.assertEqual(json.loads(error.read()), {"error": "invalid event payload"})
+            error.close()
+        else:
+            self.fail("numeric timestamp should return HTTP 400")
+
     def test_event_ingress_rejects_unknown_run_and_oversized_body(self):
         event = admit_event(run_id="missing-run")
         payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
@@ -257,6 +280,15 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             error.close()
         else:
             self.fail("unknown run should return HTTP 404")
+
+        try:
+            self.request("GET", "/runs/missing-run/events")
+        except HTTPError as error:
+            self.assertEqual(error.code, 404)
+            self.assertEqual(json.loads(error.read()), {"error": "run not found"})
+            error.close()
+        else:
+            self.fail("unknown run event listing should return HTTP 404")
 
         connection = http.client.HTTPConnection(*self.server.server_address)
         connection.putrequest("POST", "/runs/missing-run/events")

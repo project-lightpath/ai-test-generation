@@ -28,7 +28,12 @@
       }
     },
     "outcome": { "$ref": "common.schema.json#/$defs/outcome" },
-    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } },
+    "metrics": { "type": "object", "additionalProperties": { "type": ["number", "integer", "string", "boolean"] } },
+    "triage": { "enum": ["passed", "test_failure", "setup_failure", "harness_uncertainty", "needs_human_review"] },
+    "assertion_quality": { "enum": ["strong", "weak", "inconclusive", "not_evaluated"] },
+    "mutation": { "type": "object", "additionalProperties": false, "properties": { "status": { "enum": ["passed", "failed", "blocked", "not_run"] }, "score": { "type": "number", "minimum": 0, "maximum": 1 }, "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } } } },
+    "stability": { "type": "object", "additionalProperties": false, "properties": { "runs": { "type": "integer", "minimum": 1 }, "failures": { "type": "integer", "minimum": 0 }, "status": { "enum": ["stable", "flaky", "inconclusive", "not_run"] } } }
   },
   "allOf": [
     {

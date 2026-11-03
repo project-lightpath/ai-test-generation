@@ -75,12 +75,22 @@
     },
     "outcome": {
       "enum": [
+        "planned",
+        "generated",
+        "collected",
+        "passed",
+        "failed",
         "validated",
         "reproduced",
         "fixed_behavior",
+        "reached_not_reproduced",
         "not_reached",
+        "not_applicable",
+        "not_evaluable",
+        "environment_mismatch",
         "blocked",
         "inconclusive",
+        "needs_human_review",
         "stated_gap"
       ]
     },

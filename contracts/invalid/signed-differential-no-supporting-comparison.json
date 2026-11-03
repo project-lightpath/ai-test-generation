@@ -3,6 +3,7 @@
   "version": "1.0",
   "differential_id": "differential-invalid-001",
   "run_id": "run-001",
+  "request_id": "request-001",
   "base_execution_id": "execution-base-001",
   "candidate_execution_id": "execution-candidate-001",
   "outcome": "validated",
@@ -11,6 +12,16 @@
   ],
   "quality_id": "quality-001",
   "provenance_id": "provenance-001",
+  "review_and_signoff": {
+    "reviewer": {
+      "identity": {"kind": "person", "id": "reviewer-001"},
+      "role": "owner",
+      "authorization_ref": "approval-policy-001"
+    },
+    "decision": "approved",
+    "decided_at": "2026-11-03T17:06:00Z",
+    "limitations_acknowledged": true
+  },
   "signature": {
     "algorithm": "ed25519",
     "key_id": "key-001",

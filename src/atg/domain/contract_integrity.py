@@ -102,6 +102,13 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                     check.get("evidence_refs", []), require, errors, "quality.check.evidence_refs"
                 )
         if contract == "atg.signed_differential":
+            _require_related(document, "atg.request", document.get("request_id"), require, errors, "differential.request_id")
+            if document.get("plan_id") is not None:
+                _require_related(document, "atg.plan", document["plan_id"], require, errors, "differential.plan_id")
+            if document.get("generation_id") is not None:
+                _require_related(
+                    document, "atg.generation", document["generation_id"], require, errors, "differential.generation_id"
+                )
             _require_related(
                 document, "atg.execution", document.get("base_execution_id"), require, errors,
                 "differential.base_execution_id",

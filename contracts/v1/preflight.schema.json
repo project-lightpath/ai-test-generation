@@ -4,7 +4,7 @@
   "title": "ATG stage-zero preflight",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "preflight_id", "run_id", "evaluated_at", "checks", "admission"],
+  "required": ["contract", "version", "preflight_id", "run_id", "evaluated_at", "checks", "readiness", "admission"],
   "properties": {
     "contract": { "const": "atg.preflight" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
@@ -17,16 +17,24 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "status"],
-        "properties": {
-          "name": { "type": "string", "minLength": 1 },
+          "required": ["name", "status"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+          "category": { "enum": ["self_verification", "repository", "source", "toolchain", "model", "execution", "policy", "evidence", "signing"] },
+          "required_check": { "type": "boolean" },
           "status": { "enum": ["pass", "fail", "warn", "not_run"] },
           "detail": { "type": "string" },
           "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } }
         }
       }
     },
-    "admission": { "enum": ["admitted", "rejected", "blocked"] },
+    "readiness": { "enum": ["ready", "degraded", "blocked", "not_evaluable"] },
+    "admission": { "enum": ["admitted", "rejected", "blocked", "degraded"] },
+    "failure_register_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
+    "adapter": { "$ref": "common.schema.json#/$defs/identity" },
+    "model": { "$ref": "common.schema.json#/$defs/identity" },
+    "worker": { "$ref": "common.schema.json#/$defs/identity" },
+    "evidence_store": { "$ref": "common.schema.json#/$defs/identity" },
     "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
   }
 }

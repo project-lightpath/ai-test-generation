@@ -47,7 +47,7 @@ def graph_documents():
     }
     differential = {
         "contract": "atg.signed_differential", "version": "1.0", "differential_id": "differential-1",
-        "run_id": "run-1", "base_execution_id": "execution-base", "candidate_execution_id": "execution-candidate",
+        "run_id": "run-1", "request_id": "request-1", "base_execution_id": "execution-base", "candidate_execution_id": "execution-candidate",
         "quality_id": "quality-1", "provenance_id": "provenance-1", "comparisons": [],
     }
     request = {

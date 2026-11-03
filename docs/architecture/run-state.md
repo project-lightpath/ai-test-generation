@@ -7,12 +7,15 @@ journal and state snapshot must be committed atomically.
 ## State Flow
 
 ```text
-requested -> admitted -> analyzing -> admitted
-                                -> plan_review
-plan_review --approved--> planning -> code_review
-code_review --approved--> coding -> execution_review
-execution_review --approved--> executing -> quality_review
+requested -> admitted -> analyzing -> analysis_review
+analysis_review --approved--> planning -> plan_review
+plan_review --approved--> coding -> code_review
+code_review --approved--> executing -> execution_review
+execution_review --approved--> quality_review -> quality_review
 quality_review --quality--> completed | blocked | inconclusive | stated_gap
+
+feedback may return a run to Analyze, Plan, Code, or Execute without silently
+retaining the superseded active checkpoint.
 ```
 
 Review checkpoints may be explicitly superseded or expired. Expiry returns the

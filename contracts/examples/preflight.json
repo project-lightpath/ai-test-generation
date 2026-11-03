@@ -5,9 +5,10 @@
   "run_id": "run-001",
   "evaluated_at": "2026-11-03T17:00:30Z",
   "checks": [
-    {"name": "repository-access", "status": "pass", "detail": "The pinned revision is readable."},
-    {"name": "policy-admission", "status": "pass", "detail": "The request has an approved policy decision."}
+    {"name": "repository-access", "category": "repository", "required_check": true, "status": "pass", "detail": "The pinned revision is readable."},
+    {"name": "policy-admission", "category": "policy", "required_check": true, "status": "pass", "detail": "The request has an approved policy decision."}
   ],
+  "readiness": "ready",
   "admission": "admitted",
   "limitations": []
 }

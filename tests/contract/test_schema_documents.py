@@ -3,7 +3,7 @@ import pathlib
 import sys
 import unittest
 
-from jsonschema import Draft202012Validator, FormatChecker, ValidationError
+from jsonschema import Draft202012Validator, FormatChecker, RefResolver, ValidationError
 from referencing import Registry, Resource
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
@@ -145,6 +145,16 @@ class ContractSchemaTests(unittest.TestCase):
                 schema = json.loads((CONTRACTS / f"{name}.schema.json").read_text())
                 Draft202012Validator.check_schema(schema)
 
+    def test_every_schema_reference_resolves(self):
+        common = json.loads((CONTRACTS / "common.schema.json").read_text())
+        store = {common["$id"]: common}
+        for path in CONTRACTS.glob("*.schema.json"):
+            with self.subTest(schema=path.name):
+                schema = json.loads(path.read_text())
+                resolver = RefResolver.from_schema(schema, store=store)
+                for reference in _references(schema):
+                    resolver.resolve(reference)
+
     @staticmethod
     def _load(directory, filename):
         path = pathlib.Path(__file__).parents[2] / "contracts" / directory / filename
@@ -157,6 +167,17 @@ class ContractSchemaTests(unittest.TestCase):
         schema = json.loads((root / f"{name}.schema.json").read_text())
         registry = Registry().with_resource(common["$id"], Resource.from_contents(common))
         return Draft202012Validator(schema, registry=registry, format_checker=FormatChecker())
+
+
+def _references(value):
+    if isinstance(value, dict):
+        if isinstance(value.get("$ref"), str):
+            yield value["$ref"]
+        for child in value.values():
+            yield from _references(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _references(child)
 
 
 if __name__ == "__main__":

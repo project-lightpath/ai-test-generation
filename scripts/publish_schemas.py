@@ -18,6 +18,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--override-root", type=Path)
+    parser.add_argument("--clean", action="store_true", help="Remove an existing output directory before publishing")
     args = parser.parse_args()
     root = Path(__file__).parents[1]
     schemas = validate_contracts(
@@ -29,6 +30,8 @@ def main() -> None:
     )
 
     if args.output.exists():
+        if not args.clean:
+            raise FileExistsError(f"refusing to remove existing output without --clean: {args.output}")
         shutil.rmtree(args.output)
     output_contracts = args.output / "contracts/v1"
     output_contracts.mkdir(parents=True)

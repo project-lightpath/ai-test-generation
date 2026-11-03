@@ -30,8 +30,23 @@ class InvalidTransitionError(RunStateError):
     """Raised when an event is not valid for the current status."""
 
 
+class InvalidEventError(InvalidTransitionError):
+    """Raised when an event payload is malformed before transition evaluation."""
+
+
 class SupersessionError(RunStateError):
     """Raised when a checkpoint replacement does not name the active checkpoint."""
+
+
+EVENT_TYPES = frozenset({
+    "admit", "analysis_started", "analysis_completed", "checkpoint_created", "checkpoint_expired",
+    "decision_recorded", "planning_completed", "generation_started", "generation_completed",
+    "execution_started", "execution_completed", "quality_passed", "quality_blocked",
+    "quality_inconclusive", "quality_gap", "retry_requested", "return_to_analyze",
+    "return_to_plan", "return_to_code", "return_to_execute", "cancel",
+})
+CHECKPOINT_KINDS = frozenset({"analysis_review", "plan_review", "code_review", "execution_review", "quality_review"})
+DECISIONS = frozenset({"approved", "rejected", "blocked", "stated_gap"})
 
 
 @dataclass(frozen=True)
@@ -55,10 +70,28 @@ class RunEvent:
     expires_at: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.event_id or not self.run_id or not self.event_type:
-            raise ValueError("event_id, run_id, and event_type are required")
-        if self.expected_revision < 0:
-            raise ValueError("expected_revision must be non-negative")
+        if not all(isinstance(value, str) and value for value in (self.event_id, self.run_id, self.event_type)):
+            raise InvalidEventError("event_id, run_id, and event_type are required strings")
+        if self.event_type not in EVENT_TYPES:
+            raise InvalidEventError(f"unsupported event type: {self.event_type}")
+        if not isinstance(self.expected_revision, int) or isinstance(self.expected_revision, bool) or self.expected_revision < 0:
+            raise InvalidEventError("expected_revision must be a non-negative integer")
+        _parse_timestamp(self.occurred_at)
+        if self.expires_at is not None:
+            _parse_timestamp(self.expires_at)
+        if self.checkpoint_kind is not None and self.checkpoint_kind not in CHECKPOINT_KINDS:
+            raise InvalidEventError(f"unsupported checkpoint kind: {self.checkpoint_kind}")
+        if self.decision is not None and self.decision not in DECISIONS:
+            raise InvalidEventError(f"unsupported decision: {self.decision}")
+        if self.event_type == "checkpoint_created" and (not self.checkpoint_id or not self.checkpoint_kind):
+            raise InvalidEventError("checkpoint creation requires checkpoint_id and checkpoint_kind")
+        if self.event_type == "checkpoint_expired" and not self.checkpoint_id:
+            raise InvalidEventError("checkpoint expiration requires checkpoint_id")
+        if self.event_type == "decision_recorded":
+            if not all((self.checkpoint_id, self.decision, self.decision_id, self.actor_id, self.actor_role, self.authorization_ref)):
+                raise InvalidEventError("decisions require checkpoint, decision, reviewer, and authorization fields")
+        if self.event_type in {"cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
+            raise InvalidEventError(f"{self.event_type} requires a reason")
 
 
 @dataclass(frozen=True)
@@ -79,6 +112,7 @@ class RunState:
     updated_at: str = ""
     active_checkpoint_id: str | None = None
     active_checkpoint_expires_at: str | None = None
+    checkpoint_return_status: str | None = None
     superseded_checkpoint_ids: tuple[str, ...] = ()
     processed_event_ids: tuple[str, ...] = ()
     event_fingerprints: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
@@ -86,22 +120,25 @@ class RunState:
 
     _TERMINAL = frozenset({"completed", "blocked", "inconclusive", "stated_gap", "cancelled"})
     _CHECKPOINT_STATUSES = {
+        "analysis_review": "analysis_review",
         "plan_review": "plan_review",
         "code_review": "code_review",
         "execution_review": "execution_review",
         "quality_review": "quality_review",
     }
     _CHECKPOINT_PREREQUISITES = {
-        "plan_review": "admitted",
-        "code_review": "planning",
-        "execution_review": "coding",
-        "quality_review": "executing",
+        "analysis_review": {"admitted", "analyzing"},
+        "plan_review": {"admitted", "planning"},
+        "code_review": {"planning", "coding"},
+        "execution_review": {"coding", "executing"},
+        "quality_review": {"executing", "quality_review"},
     }
     _CHECKPOINT_KIND_BY_STATUS = {value: key for key, value in _CHECKPOINT_STATUSES.items()}
     _APPROVED_NEXT = {
-        "plan_review": "planning",
-        "code_review": "coding",
-        "execution_review": "executing",
+        "analysis_review": "planning",
+        "plan_review": "coding",
+        "code_review": "executing",
+        "execution_review": "quality_review",
         "quality_review": "completed",
     }
     _ALLOWED = {
@@ -118,6 +155,10 @@ class RunState:
         "quality_inconclusive": {"quality_review": "inconclusive"},
         "quality_gap": {"quality_review": "stated_gap"},
         "retry_requested": {"blocked": "admitted", "inconclusive": "admitted"},
+        "return_to_analyze": {"analyzing": "analyzing", "analysis_review": "analyzing", "planning": "analyzing", "plan_review": "analyzing", "coding": "analyzing", "code_review": "analyzing", "executing": "analyzing", "execution_review": "analyzing", "quality_review": "analyzing"},
+        "return_to_plan": {"analysis_review": "planning", "planning": "planning", "plan_review": "planning", "coding": "planning", "code_review": "planning", "executing": "planning", "execution_review": "planning", "quality_review": "planning"},
+        "return_to_code": {"coding": "coding", "code_review": "coding", "executing": "coding", "execution_review": "coding", "quality_review": "coding"},
+        "return_to_execute": {"executing": "executing", "execution_review": "executing", "quality_review": "executing"},
     }
 
     @classmethod
@@ -132,7 +173,7 @@ class RunState:
         if event.run_id != self.run_id:
             raise InvalidTransitionError("event belongs to a different run")
 
-        fingerprint = _fingerprint(event)
+        fingerprint = event_fingerprint(event)
         previous = self.event_fingerprints.get(event.event_id)
         if previous is not None:
             if previous != fingerprint:
@@ -143,6 +184,8 @@ class RunState:
             raise StaleEventError(
                 f"event expects revision {event.expected_revision}, current revision is {self.revision}"
             )
+        if self.updated_at and _parse_timestamp(event.occurred_at) < _parse_timestamp(self.updated_at):
+            raise InvalidTransitionError("event occurred_at cannot precede the current updated_at")
         retrying = event.event_type == "retry_requested" and self.status in {"blocked", "inconclusive"}
         if self.status in self._TERMINAL and not retrying:
             raise InvalidTransitionError(f"run is terminal: {self.status}")
@@ -160,25 +203,30 @@ class RunState:
                 terminal_reason=event.reason,
                 active_checkpoint_id=None,
                 active_checkpoint_expires_at=None,
+                checkpoint_return_status=None,
             )
         elif event.event_type == "checkpoint_expired":
             next_state = self._expire_checkpoint(event)
         else:
-            if event.event_type == "retry_requested" and not event.reason:
-                raise InvalidTransitionError("retry requires a reason")
+            if (event.event_type == "retry_requested" or event.event_type.startswith("return_to_")) and not event.reason:
+                raise InvalidTransitionError("retry or feedback return requires a reason")
             try:
                 next_status = self._ALLOWED[event.event_type][self.status]
             except KeyError as exc:
                 raise InvalidTransitionError(
                     f"cannot apply {event.event_type!r} while run is {self.status!r}"
                 ) from exc
-            clear_checkpoint = event.event_type == "retry_requested" or next_status in self._TERMINAL
+            clear_checkpoint = event.event_type == "retry_requested" or event.event_type.startswith("return_to_") or next_status in self._TERMINAL
             next_state = self._replace(
                 event,
                 status=next_status,
                 terminal_reason=None if event.event_type == "retry_requested" else self.terminal_reason,
                 **(
-                    {"active_checkpoint_id": None, "active_checkpoint_expires_at": None}
+                    {
+                        "active_checkpoint_id": None,
+                        "active_checkpoint_expires_at": None,
+                        "checkpoint_return_status": None,
+                    }
                     if clear_checkpoint
                     else {}
                 ),
@@ -203,10 +251,10 @@ class RunState:
             if event.supersedes is not None:
                 raise SupersessionError("there is no active checkpoint to supersede")
             replacement = False
-        if not replacement and self.status != self._CHECKPOINT_PREREQUISITES[event.checkpoint_kind]:
+        if not replacement and self.status not in self._CHECKPOINT_PREREQUISITES[event.checkpoint_kind]:
             raise InvalidTransitionError(
                 f"{event.checkpoint_kind} requires status "
-                f"{self._CHECKPOINT_PREREQUISITES[event.checkpoint_kind]!r}"
+                f"in {sorted(self._CHECKPOINT_PREREQUISITES[event.checkpoint_kind])!r}"
             )
         if event.checkpoint_id in self.superseded_checkpoint_ids:
             raise InvalidTransitionError("checkpoint id was already superseded")
@@ -219,6 +267,7 @@ class RunState:
             status=self._CHECKPOINT_STATUSES[event.checkpoint_kind],
             active_checkpoint_id=event.checkpoint_id,
             active_checkpoint_expires_at=event.expires_at,
+            checkpoint_return_status=self.checkpoint_return_status if replacement else self.status,
             superseded_checkpoint_ids=superseded,
         )
 
@@ -229,16 +278,23 @@ class RunState:
             self.active_checkpoint_expires_at
         ):
             raise InvalidTransitionError("checkpoint cannot expire before its deadline")
+        return_status = self.checkpoint_return_status
+        if return_status is None:
+            return_status = {
+                "analysis_review": "analyzing",
+                "plan_review": "planning",
+                "code_review": "coding",
+                "execution_review": "executing",
+                "quality_review": "quality_review",
+            }.get(self.status)
+        if return_status is None:
+            raise InvalidTransitionError("active checkpoint has an invalid review status")
         return self._replace(
             event,
-            status={
-                "plan_review": "admitted",
-                "code_review": "planning",
-                "execution_review": "coding",
-                "quality_review": "executing",
-            }[self.status],
+            status=return_status,
             active_checkpoint_id=None,
             active_checkpoint_expires_at=None,
+            checkpoint_return_status=None,
         )
 
     def _record_decision(self, event: RunEvent) -> "RunState":
@@ -256,7 +312,9 @@ class RunState:
                 "decisions require actor_id, actor_role, authorization_ref, and decision_id"
             )
         if event.decision == "approved":
-            next_status = self._APPROVED_NEXT[self.status]
+            next_status = self._APPROVED_NEXT.get(self.status)
+            if next_status is None:
+                raise InvalidTransitionError("active checkpoint has an invalid review status")
             reason = None
         else:
             next_status = "blocked" if event.decision == "rejected" else event.decision
@@ -266,6 +324,7 @@ class RunState:
             status=next_status,
             active_checkpoint_id=None,
             active_checkpoint_expires_at=None,
+            checkpoint_return_status=None,
             terminal_reason=reason,
         )
 
@@ -288,6 +347,7 @@ class RunState:
         optional = {
             "active_checkpoint_id": self.active_checkpoint_id,
             "active_checkpoint_expires_at": self.active_checkpoint_expires_at,
+            "checkpoint_return_status": self.checkpoint_return_status,
             "terminal_reason": self.terminal_reason,
         }
         document.update({key: value for key, value in optional.items() if value is not None})
@@ -306,6 +366,7 @@ class RunState:
             updated_at=str(document["updated_at"]),
             active_checkpoint_id=document.get("active_checkpoint_id") or None,
             active_checkpoint_expires_at=document.get("active_checkpoint_expires_at") or None,
+            checkpoint_return_status=document.get("checkpoint_return_status") or None,
             superseded_checkpoint_ids=tuple(document.get("superseded_checkpoint_ids", [])),
             processed_event_ids=tuple(document.get("processed_event_ids", [])),
             event_fingerprints=dict(document.get("event_fingerprints", {})),
@@ -322,6 +383,7 @@ class RunState:
             active_checkpoint_expires_at=changes.get(
                 "active_checkpoint_expires_at", self.active_checkpoint_expires_at
             ),
+            checkpoint_return_status=changes.get("checkpoint_return_status", self.checkpoint_return_status),
             superseded_checkpoint_ids=changes.get(
                 "superseded_checkpoint_ids", self.superseded_checkpoint_ids
             ),
@@ -330,7 +392,7 @@ class RunState:
         )
 
 
-def _fingerprint(event: RunEvent) -> str:
+def event_fingerprint(event: RunEvent) -> str:
     payload = json.dumps(event.__dict__, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

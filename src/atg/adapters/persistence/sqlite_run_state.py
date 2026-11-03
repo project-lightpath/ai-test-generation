@@ -20,7 +20,7 @@ from atg.domain.run_state import (
     RunState,
     StaleEventError,
     TransitionResult,
-    _fingerprint,
+    event_fingerprint,
 )
 
 
@@ -79,7 +79,7 @@ class SQLiteRunStateStore:
 
     def apply(self, event: RunEvent) -> TransitionResult:
         payload = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
-        digest = _fingerprint(event)
+        digest = event_fingerprint(event)
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -124,6 +124,11 @@ class SQLiteRunStateStore:
 
     def events(self, run_id: str) -> Iterator[RunEvent]:
         with self._lock:
+            exists = self._connection.execute(
+                "SELECT 1 FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if exists is None:
+                raise KeyError(run_id)
             rows = list(self._connection.execute(
                 "SELECT payload_json FROM run_events WHERE run_id = ? ORDER BY applied_revision",
                 (run_id,),

@@ -20,9 +20,9 @@ contracts or architecture.
 
 Update these references if the repository locations or ownership change.
 
-FLPATH-5043 is the current contracts and run-state workstream. Its scope is
-language-neutral versioned contracts, durable state semantics, checkpoints,
-provenance, quality outcomes, and evidence relationships.
+FLPATH-5017 is the upstream VPE/VEX data contract workstream. Do not invent or
+duplicate the VPE/VEX schema in this repository; consume its published contract
+once the upstream ownership and format are confirmed.
 
 ## Repository Boundaries
 

@@ -31,6 +31,11 @@ differentials belong to the same run and resolve their referenced IDs.
 The HTTP boundary, schema publication, and signed-differential options are
 documented in `docs/architecture/contract-distribution-and-api.md`.
 
+VEX and VPE policy inputs remain intentionally deferred until their upstream
+formats, ownership, and authentication/delivery contracts are confirmed. The
+request contract currently carries generic source and policy references without
+inventing those upstream schemas.
+
 ## Rules
 
 - Keep contracts provider- and framework-neutral.
