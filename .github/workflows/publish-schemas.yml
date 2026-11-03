@@ -1,0 +1,55 @@
+name: Publish ATG Schemas
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/publish-schemas.yml"
+  workflow_dispatch:
+    inputs:
+      override_profile:
+        description: "Optional contracts/overrides profile to publish"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install validation dependencies
+        run: python -m pip install -e '.[test]'
+      - name: Validate and build schema site
+        env:
+          OVERRIDE_PROFILE: ${{ inputs.override_profile }}
+        run: |
+          if [ -n "$OVERRIDE_PROFILE" ]; then
+            python scripts/validate_contracts.py --override-root "contracts/overrides/$OVERRIDE_PROFILE"
+            python scripts/publish_schemas.py --output _site --override-root "contracts/overrides/$OVERRIDE_PROFILE"
+          else
+            python scripts/validate_contracts.py
+            python scripts/publish_schemas.py --output _site
+          fi
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

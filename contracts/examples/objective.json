@@ -1,0 +1,12 @@
+{
+  "contract": "atg.objective",
+  "version": "1.0",
+  "objective_id": "objective-001",
+  "statement": "Add a regression test for the target behavior.",
+  "kind": "regression",
+  "priority": "high",
+  "acceptance": ["The regression is reproduced on the base revision.", "The candidate test passes after the fix."],
+  "evidence_refs": ["evidence-001"],
+  "assumptions": [],
+  "gaps": []
+}

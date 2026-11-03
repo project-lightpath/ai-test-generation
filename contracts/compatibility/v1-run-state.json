@@ -1,0 +1,12 @@
+{
+  "contract": "atg.compatibility",
+  "version": "1.0",
+  "compatibility_id": "compatibility-run-state-v1",
+  "contract_name": "atg.run_state",
+  "from_version": "1.0",
+  "to_version": "1.0",
+  "compatible": true,
+  "breaking_changes": [],
+  "migration": "No migration required.",
+  "tested_at": "2026-11-03T17:06:00Z"
+}

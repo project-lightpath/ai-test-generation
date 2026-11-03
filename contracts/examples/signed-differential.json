@@ -1,0 +1,23 @@
+{
+  "contract": "atg.signed_differential",
+  "version": "1.0",
+  "differential_id": "differential-001",
+  "run_id": "run-001",
+  "base_execution_id": "execution-base-001",
+  "candidate_execution_id": "execution-candidate-001",
+  "outcome": "validated",
+  "comparisons": [
+    {"name": "target-test-result", "base": "fail", "candidate": "pass", "classification": "changed", "evidence_refs": ["evidence-001"]}
+  ],
+  "quality_id": "quality-001",
+  "provenance_id": "provenance-001",
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "key-001",
+    "signed_payload_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "payload_format": "canonical-json-v1",
+    "public_key_ref": "key-001-public",
+    "value": "signature-value",
+    "signed_at": "2026-11-03T17:05:00Z"
+  }
+}

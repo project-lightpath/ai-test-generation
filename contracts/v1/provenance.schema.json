@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/provenance.schema.json",
+  "title": "ATG provenance manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "provenance_id", "run_id", "recorded_at", "identities", "artifacts", "contract_versions"],
+  "properties": {
+    "contract": { "const": "atg.provenance" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "provenance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "recorded_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "identities": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/identity" }, "uniqueItems": true },
+    "artifacts": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/artifact" } },
+    "contract_versions": { "type": "object", "minProperties": 1, "additionalProperties": { "type": "string", "minLength": 1 } },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  }
+}

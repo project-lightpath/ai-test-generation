@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/request.schema.json",
+  "title": "ATG request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "request_id", "run_id", "submitted_at", "source", "repository", "objective_ids", "requested_by"],
+  "properties": {
+    "contract": { "const": "atg.request" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "request_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "submitted_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "source": { "$ref": "common.schema.json#/$defs/source" },
+    "repository": { "$ref": "common.schema.json#/$defs/identity" },
+    "policy_decision": { "$ref": "common.schema.json#/$defs/identity" },
+    "objective_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "minItems": 1, "uniqueItems": true },
+    "requested_by": { "$ref": "common.schema.json#/$defs/id" },
+    "mode": { "enum": ["analyze", "full"] },
+    "constraints": { "type": "array", "items": { "type": "string" } }
+  }
+}

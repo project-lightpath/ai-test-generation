@@ -1,0 +1,19 @@
+{
+  "contract": "atg.request",
+  "version": "1.0",
+  "request_id": "request-001",
+  "run_id": "run-001",
+  "submitted_at": "2026-11-03T17:00:00Z",
+  "source": {
+    "identity": {"kind": "vpe-request", "id": "vpe-001", "version": "1"},
+    "locator": "https://vpe.example/requests/vpe-001",
+    "retrieved_at": "2026-11-03T17:00:01Z",
+    "content_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "repository": {"kind": "git-repository", "id": "https://git.example/app.git", "version": "abc123"},
+  "policy_decision": {"kind": "policy-decision", "id": "policy-001", "version": "1"},
+  "objective_ids": ["objective-001"],
+  "requested_by": "requester-001",
+  "mode": "full",
+  "constraints": ["offline-test-generation"]
+}

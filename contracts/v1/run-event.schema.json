@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/run-event.schema.json",
+  "title": "ATG run-state event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "event_id", "run_id", "event_type", "expected_revision", "occurred_at"],
+  "properties": {
+    "contract": { "const": "atg.run_event" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "event_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "event_type": { "enum": ["admit", "analysis_started", "analysis_completed", "checkpoint_created", "checkpoint_expired", "decision_recorded", "planning_completed", "generation_started", "generation_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap", "retry_requested", "cancel"] },
+    "expected_revision": { "type": "integer", "minimum": 0 },
+    "occurred_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "checkpoint_id": { "$ref": "common.schema.json#/$defs/id" },
+    "checkpoint_kind": { "enum": ["plan_review", "code_review", "execution_review", "quality_review"] },
+    "decision": { "enum": ["approved", "rejected", "blocked", "stated_gap"] },
+    "supersedes": { "$ref": "common.schema.json#/$defs/id" },
+    "reason": { "type": "string" },
+    "actor_id": { "$ref": "common.schema.json#/$defs/id" },
+    "actor_role": { "type": "string", "minLength": 1 },
+    "authorization_ref": { "$ref": "common.schema.json#/$defs/id" },
+    "decision_id": { "$ref": "common.schema.json#/$defs/id" },
+    "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        {
+          "properties": { "event_type": { "const": "checkpoint_created" } },
+          "required": ["checkpoint_id", "checkpoint_kind"]
+        },
+        {
+          "properties": { "event_type": { "const": "decision_recorded" } },
+          "required": ["checkpoint_id", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref"]
+        },
+        {
+          "properties": { "event_type": { "const": "checkpoint_expired" } },
+          "required": ["checkpoint_id"]
+        },
+        {
+          "properties": { "event_type": { "const": "cancel" } },
+          "required": ["reason"]
+        },
+        {
+          "properties": { "event_type": { "const": "retry_requested" } },
+          "required": ["reason"]
+        },
+        {
+          "properties": {
+            "event_type": {
+              "enum": ["admit", "analysis_started", "analysis_completed", "planning_completed", "generation_started", "generation_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

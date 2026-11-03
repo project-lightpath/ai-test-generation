@@ -1,0 +1,19 @@
+{
+  "contract": "atg.execution",
+  "version": "1.0",
+  "execution_id": "execution-candidate-001",
+  "run_id": "run-001",
+  "generation_id": "generation-001",
+  "subject": "candidate",
+  "subject_identity": {"kind": "git-tree", "id": "candidate-001", "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+  "worker": {"kind": "worker", "id": "worker-001"},
+  "tool": {"kind": "maven", "id": "maven", "version": "3.9"},
+  "command": ["mvn", "-B", "verify"],
+  "command_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "environment": {"kind": "container", "id": "worker-image", "version": "1"},
+  "status": "passed",
+  "exit_code": 0,
+  "started_at": "2026-11-03T17:03:00Z",
+  "finished_at": "2026-11-03T17:04:00Z",
+  "artifacts": []
+}

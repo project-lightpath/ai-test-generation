@@ -1,0 +1,16 @@
+{
+  "contract": "atg.run_state",
+  "version": "1.0",
+  "run_id": "run-001",
+  "status": "plan_review",
+  "revision": 3,
+  "updated_at": "2026-11-03T17:01:00Z",
+  "active_checkpoint_id": "checkpoint-plan-001",
+  "superseded_checkpoint_ids": [],
+  "processed_event_ids": ["event-admit", "event-analysis-start", "event-analysis-complete"],
+  "event_fingerprints": {
+    "event-admit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "event-analysis-start": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "event-analysis-complete": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

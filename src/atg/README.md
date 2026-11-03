@@ -1,6 +1,9 @@
 # ATG Service
 
-The `src/atg/` tree contains the service implementation. Keep domain and application behavior independent from framework, model, execution-provider, SCM, and temporary demo implementations.
+The `src/atg/` tree contains the ATG service implementation under development.
+Keep domain and application behavior independent from framework, model,
+execution-provider, SCM, and temporary demo implementations. If the service is
+later split into multiple deployables, preserve these boundaries and contracts.
 
 ## Boundaries
 
@@ -12,5 +15,14 @@ The `src/atg/` tree contains the service implementation. Keep domain and applica
 - `ports/`: stable interfaces used by application/domain code.
 - `adapters/`: translations to external systems and providers.
 - `tools/`: bounded, authorized repository and analysis tools.
+
+The dependency-free run-state implementation is in `domain/run_state.py`. It is
+persistence- and framework-neutral;
+workflow adapters should journal `RunEvent` values and persist the resulting
+`RunState` atomically.
+
+The SQLite persistence adapter and HTTP component are initial development
+implementations used to test that boundary across transactions and process
+restarts. They can evolve in place or be replaced by a Java/Quarkus runtime.
 
 Implementations in `experiments/` or `deploy/` must not be imported directly into domain or application code.

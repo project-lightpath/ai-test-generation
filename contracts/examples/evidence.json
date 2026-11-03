@@ -1,0 +1,18 @@
+{
+  "contract": "atg.evidence",
+  "version": "1.0",
+  "evidence_id": "evidence-001",
+  "category": "repository",
+  "subject": {"kind": "git-repository", "id": "https://git.example/app.git", "version": "abc123"},
+  "source": {
+    "identity": {"kind": "git", "id": "https://git.example/app.git"},
+    "locator": "https://git.example/app/blob/abc123/src/main/App.java",
+    "retrieved_at": "2026-11-03T17:00:00Z",
+    "content_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "observed_at": "2026-11-03T17:00:00Z",
+  "content_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "claims": ["The target behavior is implemented in App.java"],
+  "artifacts": [],
+  "limitations": []
+}

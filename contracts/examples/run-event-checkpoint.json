@@ -1,0 +1,12 @@
+{
+  "contract": "atg.run_event",
+  "version": "1.0",
+  "event_id": "event-checkpoint-001",
+  "run_id": "run-001",
+  "event_type": "checkpoint_created",
+  "expected_revision": 3,
+  "occurred_at": "2026-11-03T17:01:01Z",
+  "checkpoint_id": "checkpoint-plan-001",
+  "checkpoint_kind": "plan_review",
+  "expires_at": "2026-11-04T17:01:01Z"
+}

@@ -1,0 +1,15 @@
+{
+  "contract": "atg.provenance",
+  "version": "1.0",
+  "provenance_id": "provenance-001",
+  "run_id": "run-001",
+  "recorded_at": "2026-11-03T17:05:00Z",
+  "identities": [
+    {"kind": "git-repository", "id": "https://git.example/app.git", "version": "abc123"},
+    {"kind": "model", "id": "approved-model", "version": "1"},
+    {"kind": "worker-image", "id": "atg-worker", "version": "1"}
+  ],
+  "artifacts": [],
+  "contract_versions": {"atg.request": "1.0", "atg.generation": "1.0", "atg.execution": "1.0"},
+  "limitations": []
+}

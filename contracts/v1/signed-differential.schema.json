@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/signed-differential.schema.json",
+  "title": "ATG signed differential result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "differential_id", "run_id", "base_execution_id", "candidate_execution_id", "outcome", "comparisons", "provenance_id", "signature"],
+  "properties": {
+    "contract": { "const": "atg.signed_differential" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "differential_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "base_execution_id": { "$ref": "common.schema.json#/$defs/id" },
+    "candidate_execution_id": { "$ref": "common.schema.json#/$defs/id" },
+    "outcome": { "$ref": "common.schema.json#/$defs/outcome" },
+    "comparisons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "base", "candidate", "classification"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "base": {},
+          "candidate": {},
+          "classification": { "enum": ["same", "changed", "missing", "inconclusive"] },
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } }
+        }
+      }
+    },
+    "quality_id": { "$ref": "common.schema.json#/$defs/id" },
+    "provenance_id": { "$ref": "common.schema.json#/$defs/id" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "signed_payload_digest", "value", "signed_at"],
+      "properties": {
+        "algorithm": { "type": "string", "minLength": 1 },
+        "key_id": { "$ref": "common.schema.json#/$defs/id" },
+        "signed_payload_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+        "payload_format": { "type": "string", "minLength": 1 },
+        "public_key_ref": { "$ref": "common.schema.json#/$defs/id" },
+        "value": { "type": "string", "minLength": 1 },
+        "signed_at": { "$ref": "common.schema.json#/$defs/timestamp" }
+      }
+    },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  }
+}

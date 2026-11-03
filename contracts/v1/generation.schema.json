@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/generation.schema.json",
+  "title": "ATG generated test change",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "generation_id", "run_id", "plan_id", "base", "candidate", "status", "created_at"],
+  "properties": {
+    "contract": { "const": "atg.generation" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "generation_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/id" },
+    "base": { "$ref": "common.schema.json#/$defs/identity" },
+    "candidate": { "$ref": "common.schema.json#/$defs/identity" },
+    "patch_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+    "changed_files": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "status": { "enum": ["generated", "verified", "rejected", "inconclusive"] },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "model": { "$ref": "common.schema.json#/$defs/identity" },
+    "artifacts": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/artifact" } },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["generated", "verified"] } } },
+      "then": { "required": ["patch_digest", "changed_files"] }
+    }
+  ]
+}
