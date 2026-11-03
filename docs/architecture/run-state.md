@@ -39,5 +39,5 @@ stated gaps are terminal for that run.
 
 `src/atg/ports/run_state.py` is the service persistence port.
 `SQLiteRunStateStore` is the initial development adapter used for component
-tests and local execution. A later Java/Quarkus implementation must preserve
-the same event, revision, replay, and checkpoint semantics.
+tests and local execution. A later Go, Java/Quarkus, or other selected runtime
+must preserve the same event, revision, replay, and checkpoint semantics.

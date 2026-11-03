@@ -23,6 +23,7 @@ workflow adapters should journal `RunEvent` values and persist the resulting
 
 The SQLite persistence adapter and HTTP component are initial development
 implementations used to test that boundary across transactions and process
-restarts. They can evolve in place or be replaced by a Java/Quarkus runtime.
+restarts. They can evolve in place or be replaced by a Go, Java/Quarkus, or
+other selected runtime.
 
 Implementations in `experiments/` or `deploy/` must not be imported directly into domain or application code.

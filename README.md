@@ -20,4 +20,7 @@ The current SSC demo and any forks are temporary development and compatibility m
 
 ## Current Target
 
-The MVP target is the VPE/A&P-selected Java 21/Quarkus fixture and profile. The SSC Spring Boot demo is a temporary compatibility baseline and optional fork source.
+The VPE/A&P-selected Java 21/Quarkus fixture is an integration context, not a
+mandatory ATG runtime choice. ATG runtime selection remains open while the
+service boundaries are developed. The SSC Spring Boot demo is a temporary
+execution-host baseline and optional fork source.

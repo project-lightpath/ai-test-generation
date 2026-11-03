@@ -36,9 +36,11 @@ provenance, quality outcomes, and evidence relationships.
 - `deploy/`: SSC-hosted replacement deployment guidance.
 - `docs/`: architecture and lifecycle decisions.
 
-The initial implementation is Python. A later Java/Quarkus implementation or
-service split must preserve the observable contract, revision, replay,
-checkpoint, and error semantics covered by the tests.
+The initial implementation is Python. The ATG runtime language remains open;
+Go, Java/Quarkus, or Python may be selected based on service, platform, and
+integration requirements. A later runtime change or service split must
+preserve the observable contract, revision, replay, checkpoint, and error
+semantics covered by the tests.
 
 ## Validation
 
