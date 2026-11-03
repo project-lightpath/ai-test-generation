@@ -1,0 +1,16 @@
+# Temporary ownership map for the experiment/product transition.
+# Replace placeholders with approved owners before product release.
+
+/contracts/ @project-lightpath/ai-test-generation-contracts
+/src/atg/domain/ @project-lightpath/ai-test-generation-core
+/src/atg/ports/ @project-lightpath/ai-test-generation-core
+/src/atg/adapters/input/ @project-lightpath/ai-test-generation-input
+/src/atg/adapters/policy/ @project-lightpath/ai-test-generation-input
+/src/atg/adapters/repository/ @project-lightpath/ai-test-generation-target
+/src/atg/adapters/framework/ @project-lightpath/ai-test-generation-target
+/src/atg/adapters/execution/ @project-lightpath/ai-test-generation-execution
+/src/atg/adapters/evidence/ @project-lightpath/ai-test-generation-evidence
+/tests/ @project-lightpath/ai-test-generation-qe
+/fixtures/ @project-lightpath/ai-test-generation-qe
+/experiments/ @project-lightpath/ai-test-generation-research
+/deploy/ @project-lightpath/ai-test-generation-platform
