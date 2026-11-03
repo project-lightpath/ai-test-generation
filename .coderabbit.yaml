@@ -1,0 +1,77 @@
+language: "en-US"
+
+# Keep repository review behavior within CodeRabbit's free-tier feature set.
+enable_free_tier: true
+
+reviews:
+  profile: "assertive"
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!PR-SUMMARY-*.md"
+    - "!.kilo/**"
+    - "!.venv/**"
+    - "!**/__pycache__/**"
+    - "!**/generated/**"
+    - "!_site/**"
+  path_instructions:
+    - path: "contracts/**/*.json"
+      instructions: |
+        Review JSON Schema Draft 2020-12 correctness, stable $id and $ref
+        behavior, required fields, additionalProperties, discriminators,
+        explicit blocked/inconclusive/not_reached/stated_gap outcomes, and
+        compatibility implications. Do not infer success from missing
+        evidence. Preserve source, artifact, command, environment, model,
+        worker, tool, reviewer, and authorization identities where evidence
+        depends on them.
+    - path: "contracts/examples/**"
+      instructions: |
+        Verify examples are schema-valid, internally consistent, useful for
+        cross-document integrity tests, and free of credentials, customer data,
+        or authoritative VEX content.
+    - path: "contracts/overrides/**"
+      instructions: |
+        Treat override files as complete destructive-development schema
+        replacements, not patches. Check that the profile is explicit and does
+        not silently change the default consumer contract.
+    - path: "src/atg/domain/**/*.py"
+      instructions: |
+        Review run-state transitions, revision compare-and-swap semantics,
+        event-id/payload-digest idempotency, checkpoint supersession and
+        expiry, retry/recovery behavior, terminal outcomes, and cross-document
+        integrity. Look for invalid transitions that can be accepted or valid
+        evidence states that can be skipped.
+    - path: "src/atg/adapters/**/*.py"
+      instructions: |
+        Review transaction boundaries, persistence/replay correctness,
+        concurrency safety, resource lifecycle, untrusted input handling, and
+        whether development adapters accidentally become production contracts.
+    - path: "src/atg/component/**/*.py"
+      instructions: |
+        Review HTTP status and error semantics, input validation, process
+        lifecycle, concurrency behavior, and whether the component exposes the
+        same observable contract as the service boundary.
+    - path: "tests/**/*.py"
+      instructions: |
+        Check meaningful assertions rather than existence-only or tautological
+        checks. Require success, negative, boundary, stale, duplicate,
+        concurrency, persistence/replay, and recovery coverage where relevant.
+        Flag discarded return values, conditional no-op assertions, and tests
+        that do not verify the claimed behavior.
+    - path: "scripts/**/*.py"
+      instructions: |
+        Review deterministic schema validation/publication, safe path handling,
+        complete override selection, reproducible catalogs/checksums, and clear
+        failures for invalid fixtures or unresolved references.
+    - path: ".github/workflows/**"
+      instructions: |
+        Review least-privilege permissions, pull-request behavior, reproducible
+        dependency installation, artifact naming across reruns, Pages
+        deployment prerequisites, secret exposure, and action pinning or
+        versioning risks.
+
+chat:
+  auto_reply: true
