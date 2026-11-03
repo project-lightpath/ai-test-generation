@@ -59,6 +59,11 @@ Use release-tagged bundles or an internal artifact registry as the operational
 distribution mechanism after consumer adoption. Keep the runtime resolver local
 and pin the schema bundle version.
 
+The Pages artifact name includes the workflow run ID and attempt number. This is
+intentional: rerunning a failed publication can leave the previous artifact in
+the same workflow run, and `actions/deploy-pages` rejects multiple artifacts
+with the same name.
+
 The current `$id` namespace is valid as a future publication namespace, but it
 is not evidence that the URLs are already reachable.
 
