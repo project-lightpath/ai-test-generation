@@ -24,6 +24,8 @@ EXPECTED = {
     "quality",
     "provenance",
     "preflight",
+    "platform-readiness",
+    "run-admission",
     "compatibility",
     "signed-differential",
     "run-state",
@@ -69,6 +71,8 @@ class ContractSchemaTests(unittest.TestCase):
             "quality.json": "quality",
             "provenance.json": "provenance",
             "preflight.json": "preflight",
+            "platform-readiness.json": "platform-readiness",
+            "run-admission.json": "run-admission",
             "signed-differential.json": "signed-differential",
         }
         for filename, schema_name in examples.items():

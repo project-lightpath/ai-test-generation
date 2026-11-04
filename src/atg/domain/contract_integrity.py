@@ -67,7 +67,9 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             "atg.execution",
             "atg.quality",
             "atg.provenance",
-            "atg.preflight",
+             "atg.preflight",
+             "atg.platform_readiness",
+             "atg.run_admission",
             "atg.run_event",
         }:
             require_run(document, f"{contract}.run_id")
@@ -159,6 +161,8 @@ def _document_id(document: Mapping[str, object]) -> str | None:
         "atg.quality": "quality_id",
         "atg.provenance": "provenance_id",
         "atg.preflight": "preflight_id",
+        "atg.platform_readiness": "readiness_id",
+        "atg.run_admission": "admission_id",
         "atg.compatibility": "compatibility_id",
         "atg.signed_differential": "differential_id",
         "atg.run_state": "run_id",
@@ -179,6 +183,8 @@ def _document_id(document: Mapping[str, object]) -> str | None:
         "quality_id",
         "provenance_id",
         "preflight_id",
+        "readiness_id",
+        "admission_id",
         "compatibility_id",
         "differential_id",
         "run_id",

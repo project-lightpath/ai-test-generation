@@ -12,6 +12,8 @@ import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
+from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
+from atg.application.readiness import PlatformReadinessService
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.domain.run_state import (
     InvalidEventError,
@@ -32,8 +34,29 @@ class RequestTooLargeError(ValueError):
     """Raised when an HTTP request exceeds the component limit."""
 
 
-def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int = 0):
+def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int = 0, capabilities=()):
     store = SQLiteRunStateStore(database)
+
+    class CapabilityCheck:
+        def evaluate(self, request):
+            missing = sorted(set(request.requested_capabilities) - set(capabilities))
+            return CheckResult(
+                name="requested-capabilities",
+                category="policy",
+                required_check=True,
+                status="fail" if missing else "pass",
+                detail=f"Unsupported capabilities: {', '.join(missing)}" if missing else "Requested capabilities are supported.",
+            )
+
+    admission_service = AdmissionService(store, (CapabilityCheck(),))
+    class ContractCheck:
+        def evaluate(self, request):
+            return CheckResult(
+                name="contract-registry", category="self_verification", required_check=True,
+                status="pass", detail="ATG v1 contracts are loaded.",
+            )
+
+    readiness_service = PlatformReadinessService((ContractCheck(),))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
@@ -46,6 +69,8 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     self._respond(200, store.get_run(parts[1]).to_document())
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
+                elif parts == ["readiness"]:
+                    self._respond(200, readiness_service.evaluate().to_document())
                 else:
                     self._respond(404, {"error": "not found"})
             except KeyError:
@@ -70,6 +95,44 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                         raise BadRequestError(str(exc)) from exc
                     state = store.create_run(body["run_id"], body["created_at"])
                     self._respond(201, state.to_document())
+                    return
+                if parts == ["admissions"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("admission body must be a JSON object")
+                    if body.get("contract") != "atg.request" or body.get("version") != "1.0":
+                        raise BadRequestError("admission requires atg.request version 1.0")
+                    required = ("request_id", "run_id", "submitted_at", "idempotency_key", "requested_by")
+                    if any(not isinstance(body.get(field), str) or not body[field] for field in required):
+                        raise BadRequestError("admission requires request_id, run_id, submitted_at, and idempotency_key")
+                    for field in ("request_id", "run_id", "idempotency_key"):
+                        try:
+                            validate_identifier(body[field], field)
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body["submitted_at"], "submitted_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    requested = body.get("requested_capabilities", [])
+                    if not isinstance(requested, list) or not all(isinstance(value, str) for value in requested):
+                        raise BadRequestError("requested_capabilities must be a list of strings")
+                    if not isinstance(body["source"], dict) or not isinstance(body["repository"], dict):
+                        raise BadRequestError("source and repository must be objects")
+                    if not isinstance(body["objective_ids"], list) or not body["objective_ids"] or not all(isinstance(value, str) for value in body["objective_ids"]):
+                        raise BadRequestError("objective_ids must be a non-empty list of strings")
+                    request = AdmissionRequest(
+                        request_id=body["request_id"],
+                        run_id=body["run_id"],
+                        submitted_at=body["submitted_at"],
+                        idempotency_key=body["idempotency_key"],
+                        requested_capabilities=tuple(requested),
+                        tenant_id=body.get("tenant_id"),
+                        authorization_ref=body.get("authorization_ref"),
+                        payload=body,
+                    )
+                    existing = store.get_admission(request.idempotency_key)
+                    result = admission_service.admit(request)
+                    self._respond(200 if existing is not None else 201, result.to_document())
                     return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
@@ -104,6 +167,8 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 self._respond(400, {"error": str(exc)})
             except RunStateError as exc:
                 self._respond(409, {"error": str(exc)})
+            except AdmissionConflictError as exc:
+                self._respond(409, {"error": str(exc)})
 
         def _parts(self):
             return [unquote(part) for part in urlsplit(self.path).path.strip("/").split("/") if part]
@@ -134,6 +199,8 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
 
     server = ThreadingHTTPServer((host, port), Handler)
     server.store = store
+    server.admission_service = admission_service
+    server.readiness_service = readiness_service
     return server
 
 

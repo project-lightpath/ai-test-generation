@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/platform-readiness.schema.json",
+  "title": "ATG platform readiness result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "readiness_id", "evaluated_at", "checks", "status"],
+  "properties": {
+    "contract": { "const": "atg.platform_readiness" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "readiness_id": { "$ref": "common.schema.json#/$defs/id" },
+    "evaluated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "checks": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/preflight_check" } },
+    "status": { "$ref": "common.schema.json#/$defs/preflight_status" },
+    "service": { "$ref": "common.schema.json#/$defs/identity" },
+    "failure_register_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  },
+  "allOf": [{
+    "if": { "properties": { "status": { "enum": ["ready", "degraded"] } } },
+    "then": { "properties": { "checks": { "not": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } } }
+  }]
+}

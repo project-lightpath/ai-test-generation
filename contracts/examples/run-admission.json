@@ -1,0 +1,16 @@
+{
+  "contract": "atg.run_admission",
+  "version": "1.0",
+  "admission_id": "admission-001",
+  "request_id": "request-001",
+  "run_id": "run-001",
+  "evaluated_at": "2026-11-04T18:00:01Z",
+  "checks": [
+    {"name": "request-contract", "category": "self_verification", "required_check": true, "status": "pass"},
+    {"name": "requested-capabilities", "category": "policy", "required_check": true, "status": "pass"}
+  ],
+  "status": "admitted",
+  "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "platform_readiness_id": "readiness-001",
+  "limitations": []
+}

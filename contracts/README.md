@@ -12,7 +12,7 @@ in `v1/common.schema.json`.
 
 The lifecycle is represented by:
 
-- `request`, `preflight`, `objective`, `plan`, and `checkpoint` for admission and review.
+- `request`, `platform-readiness`, `run-admission`, `preflight`, `objective`, `plan`, and `checkpoint` for stage-zero admission and review. Platform readiness is service-level; run admission is request-level.
 - `feedback`, `generation`, `execution`, and `quality` for Analyze -> Plan -> Code -> Execute.
 - `provenance` and `signed-differential` for reproducible, owner-reviewable evidence.
 - `run-state` and `run-event` for durable, idempotent workflow state transitions.

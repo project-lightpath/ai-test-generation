@@ -25,6 +25,8 @@ EXAMPLES = {
     "quality": "quality.json",
     "provenance": "provenance.json",
     "preflight": "preflight.json",
+    "platform-readiness": "platform-readiness.json",
+    "run-admission": "run-admission.json",
     "signed-differential": "signed-differential.json",
 }
 

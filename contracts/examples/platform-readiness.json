@@ -1,0 +1,13 @@
+{
+  "contract": "atg.platform_readiness",
+  "version": "1.0",
+  "readiness_id": "readiness-001",
+  "evaluated_at": "2026-11-04T18:00:00Z",
+  "checks": [
+    {"name": "contract-registry", "category": "self_verification", "required_check": true, "status": "pass", "detail": "Supported contracts are loaded."},
+    {"name": "execution-provider", "category": "execution", "required_check": false, "status": "warn", "detail": "No live provider configured for local development."}
+  ],
+  "status": "degraded",
+  "service": {"kind": "atg-service", "id": "atg-local", "version": "dev"},
+  "limitations": []
+}

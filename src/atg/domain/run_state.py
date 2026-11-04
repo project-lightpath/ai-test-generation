@@ -40,7 +40,7 @@ class SupersessionError(RunStateError):
 
 
 EVENT_TYPES = frozenset({
-    "admit", "analysis_started", "analysis_completed", "checkpoint_created", "checkpoint_expired",
+    "admit", "admission_blocked", "analysis_started", "analysis_completed", "checkpoint_created", "checkpoint_expired",
     "decision_recorded", "planning_completed", "generation_started", "generation_completed",
     "execution_started", "execution_completed", "quality_passed", "quality_blocked",
     "quality_inconclusive", "quality_gap", "retry_requested", "return_to_analyze",
@@ -107,7 +107,7 @@ class RunEvent:
         if self.event_type == "decision_recorded":
             if not all((self.checkpoint_id, self.decision, self.decision_id, self.actor_id, self.actor_role, self.authorization_ref)):
                 raise InvalidEventError("decisions require checkpoint, decision, reviewer, and authorization fields")
-        if self.event_type in {"cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
+        if self.event_type in {"admission_blocked", "cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
             raise InvalidEventError(f"{self.event_type} requires a reason")
 
 
@@ -160,6 +160,7 @@ class RunState:
     }
     _ALLOWED = {
         "admit": {"requested": "admitted"},
+        "admission_blocked": {"requested": "blocked"},
         "analysis_started": {"admitted": "analyzing"},
         "analysis_completed": {"analyzing": "admitted"},
         "planning_completed": {"planning": "planning"},
@@ -236,7 +237,11 @@ class RunState:
             next_state = self._replace(
                 event,
                 status=next_status,
-                terminal_reason=None if event.event_type == "retry_requested" else self.terminal_reason,
+                terminal_reason=(
+                    None
+                    if event.event_type == "retry_requested"
+                    else event.reason if event.event_type == "admission_blocked" else self.terminal_reason
+                ),
                 **(
                     {
                         "active_checkpoint_id": None,

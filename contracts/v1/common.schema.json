@@ -62,6 +62,21 @@
         "severity": { "enum": ["info", "warning", "error"] }
       }
     },
+    "preflight_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "required_check", "status"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "category": { "enum": ["self_verification", "repository", "source", "toolchain", "model", "execution", "policy", "evidence", "signing"] },
+        "required_check": { "type": "boolean" },
+        "status": { "enum": ["pass", "fail", "warn", "not_run"] },
+        "detail": { "type": "string" },
+        "evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "preflight_status": { "enum": ["ready", "degraded", "blocked", "not_evaluable"] },
+    "admission_status": { "enum": ["admitted", "blocked", "rejected"] },
     "reviewer": {
       "type": "object",
       "additionalProperties": false,
@@ -94,6 +109,7 @@
         "stated_gap"
       ]
     },
-    "contract_version": { "const": "1.0" }
+    "contract_version": { "const": "1.0" },
+    "contract_digest": { "$ref": "#/$defs/digest" }
   }
 }
