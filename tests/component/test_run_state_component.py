@@ -264,6 +264,15 @@ class RunStateHTTPComponentTests(unittest.TestCase):
         else:
             self.fail("invalid JSON should return HTTP 400")
 
+        try:
+            self.raw_request("POST", "/runs/run-http/events", b"\xff\xfe")
+        except HTTPError as error:
+            self.assertEqual(error.code, 400)
+            self.assertEqual(json.loads(error.read()), {"error": "request body must contain valid JSON"})
+            error.close()
+        else:
+            self.fail("non-UTF-8 JSON should return HTTP 400")
+
         invalid_value = {"contract": "atg.run_event", "version": "1.0", **event.__dict__, "event_id": ""}
         try:
             self.request("POST", "/runs/run-http/events", invalid_value)

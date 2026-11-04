@@ -120,7 +120,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 raise RequestTooLargeError(f"request body exceeds {MAX_REQUEST_BYTES} bytes")
             try:
                 body = json.loads(self.rfile.read(length))
-            except json.JSONDecodeError as exc:
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise BadRequestError("request body must contain valid JSON") from exc
             return body
 
