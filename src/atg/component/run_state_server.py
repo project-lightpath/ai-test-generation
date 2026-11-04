@@ -48,7 +48,6 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 detail=f"Unsupported capabilities: {', '.join(missing)}" if missing else "Requested capabilities are supported.",
             )
 
-    admission_service = AdmissionService(store, (CapabilityCheck(),))
     class ContractCheck:
         def evaluate(self, request):
             return CheckResult(
@@ -57,6 +56,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
             )
 
     readiness_service = PlatformReadinessService((ContractCheck(),))
+    admission_service = AdmissionService(store, (CapabilityCheck(),), readiness=readiness_service)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002

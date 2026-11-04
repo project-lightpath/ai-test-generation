@@ -1,0 +1,9 @@
+{
+  "register": "atg.failure_register",
+  "version": "1.0",
+  "cases": [
+    {"id": "FR-CONTRACT-001", "description": "Unsupported contract versions fail closed", "required": true},
+    {"id": "FR-ADMISSION-001", "description": "Blocked admission cannot advance the run", "required": true},
+    {"id": "FR-IDEMPOTENCY-001", "description": "Repeated admission does not create a second transition", "required": true}
+  ]
+}

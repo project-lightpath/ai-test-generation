@@ -20,7 +20,7 @@ class SchemaToolTests(unittest.TestCase):
             ROOT / "contracts/compatibility",
             ROOT / "contracts/invalid",
         )
-        self.assertEqual(len(schemas), 18)
+        self.assertEqual(len(schemas), 19)
 
     def test_complete_override_profile_replaces_only_selected_schema(self):
         with TemporaryDirectory() as directory:

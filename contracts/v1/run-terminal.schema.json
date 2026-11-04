@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/run-terminal.schema.json",
+  "title": "ATG terminal run record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "terminal_id", "request_id", "run_id", "admission_id", "status", "reason", "request_digest", "identities"],
+  "properties": {
+    "contract": { "const": "atg.run_terminal" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "terminal_id": { "$ref": "common.schema.json#/$defs/id" },
+    "request_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "admission_id": { "$ref": "common.schema.json#/$defs/id" },
+    "status": { "enum": ["blocked", "rejected"] },
+    "reason": { "type": "string", "minLength": 1 },
+    "request_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+    "checks": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/preflight_check" } },
+    "failure_register_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
+    "identities": { "$ref": "common.schema.json#/$defs/identity_bundle" },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  }
+}

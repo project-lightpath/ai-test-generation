@@ -252,4 +252,5 @@ def _admission_from_document(document: dict) -> AdmissionResult:
         failure_register_refs=tuple(document.get("failure_register_refs", [])),
         reason=document.get("reason"),
         limitations=tuple(document.get("limitations", [])),
+        identities=document.get("identities", {}),
     )

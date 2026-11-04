@@ -18,7 +18,8 @@
     "platform_readiness_id": { "$ref": "common.schema.json#/$defs/id" },
     "failure_register_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
     "reason": { "type": "string", "minLength": 1 },
-    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } },
+    "identities": { "$ref": "common.schema.json#/$defs/identity_bundle" }
   },
   "allOf": [
     { "if": { "properties": { "status": { "const": "admitted" } } }, "then": { "properties": { "checks": { "not": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } } } },

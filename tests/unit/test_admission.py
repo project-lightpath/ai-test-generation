@@ -9,6 +9,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore  # noqa: E402
 from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult  # noqa: E402
 from atg.domain.run_state import InvalidTransitionError  # noqa: E402
+from atg.ports.evidence import EvidencePublicationBlockedError, GuardedEvidencePublisher  # noqa: E402
+from atg.adapters.failure_register import FailureRegisterCheck  # noqa: E402
 
 
 class FixedCheck:
@@ -51,10 +53,29 @@ class AdmissionTests(unittest.TestCase):
                 store.apply(RunEvent("analysis", "run-1", "analysis_started", 1, "2026-11-04T18:00:01Z"))
 
             self.assertEqual([event.event_type for event in store.events("run-1")], ["admission_blocked"])
+            store.close()
 
     def test_invalid_check_result_is_rejected(self):
         with self.assertRaises(ValueError):
             CheckResult("bad", True, "unknown")
+
+    def test_terminal_record_and_evidence_guard_are_explicit(self):
+        with TemporaryDirectory() as directory:
+            store = SQLiteRunStateStore(pathlib.Path(directory) / "state.sqlite3")
+            result = AdmissionService(store, (FixedCheck("fail", detail="blocked"),)).admit(request())
+            self.assertEqual(result.terminal_document()["contract"], "atg.run_terminal")
+            publisher = GuardedEvidencePublisher(store)
+            with self.assertRaises(EvidencePublicationBlockedError):
+                publisher.publish("run-1", {"kind": "execution"})
+            self.assertEqual(publisher.records, {})
+            store.close()
+
+    def test_failure_register_fixture_produces_deterministic_check(self):
+        fixture = pathlib.Path(__file__).parents[2] / "contracts" / "failure-register" / "v1" / "cases.json"
+        check = FailureRegisterCheck(fixture, failed_case_ids=("FR-ADMISSION-001",))
+        result = check.evaluate(None)
+        self.assertEqual(result.status, "fail")
+        self.assertEqual(result.evidence_refs, ("FR-ADMISSION-001",))
 
     def test_optional_failure_does_not_block_admission(self):
         with TemporaryDirectory() as directory:
@@ -62,6 +83,7 @@ class AdmissionTests(unittest.TestCase):
             result = AdmissionService(store, (FixedCheck("fail", required=False),)).admit(request())
             self.assertEqual(result.status, "admitted")
             self.assertEqual(store.get_run("run-1").status, "admitted")
+            store.close()
 
     def test_same_request_is_idempotent_and_different_payload_conflicts(self):
         with TemporaryDirectory() as directory:
@@ -74,6 +96,7 @@ class AdmissionTests(unittest.TestCase):
 
             with self.assertRaises(AdmissionConflictError):
                 service.admit(request(key="key-1", run_id="other-run"))
+            store.close()
 
     def test_blocked_admission_survives_restart(self):
         with TemporaryDirectory() as directory:
@@ -86,6 +109,7 @@ class AdmissionTests(unittest.TestCase):
             restarted = SQLiteRunStateStore(database)
             self.assertEqual(restarted.get_admission("key-1"), result)
             self.assertEqual(restarted.replay("run-1").status, "blocked")
+            restarted.close()
 
     def test_two_store_instances_return_one_durable_admission(self):
         with TemporaryDirectory() as directory:

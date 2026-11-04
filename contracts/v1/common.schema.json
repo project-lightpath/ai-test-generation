@@ -29,6 +29,17 @@
         "digest": { "$ref": "#/$defs/digest" }
       }
     },
+    "identity_bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "$ref": "#/$defs/identity" },
+        "artifact": { "$ref": "#/$defs/identity" },
+        "contract": { "$ref": "#/$defs/identity" },
+        "decision": { "$ref": "#/$defs/identity" },
+        "environment": { "$ref": "#/$defs/identity" }
+      }
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,

@@ -73,6 +73,7 @@ class AdmissionResult:
     failure_register_refs: tuple[str, ...] = ()
     reason: str | None = None
     limitations: tuple[Mapping[str, object], ...] = ()
+    identities: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     def to_document(self) -> dict[str, object]:
         document = {
@@ -85,6 +86,7 @@ class AdmissionResult:
             "checks": [check.to_document() for check in self.checks],
             "status": self.status,
             "request_digest": self.request_digest,
+            "identities": dict(self.identities),
         }
         optional = {
             "platform_readiness_id": self.platform_readiness_id,
@@ -95,15 +97,35 @@ class AdmissionResult:
         document.update({key: value for key, value in optional.items() if value is not None and value != []})
         return document
 
+    def terminal_document(self) -> dict[str, object] | None:
+        if self.status not in {"blocked", "rejected"}:
+            return None
+        return {
+            "contract": "atg.run_terminal",
+            "version": "1.0",
+            "terminal_id": f"terminal-{self.admission_id}",
+            "request_id": self.request_id,
+            "run_id": self.run_id,
+            "admission_id": self.admission_id,
+            "status": self.status,
+            "reason": self.reason or "admission rejected",
+            "request_digest": self.request_digest,
+            "checks": [check.to_document() for check in self.checks],
+            "failure_register_refs": list(self.failure_register_refs),
+            "identities": dict(self.identities),
+            "limitations": list(self.limitations),
+        }
+
 
 class AdmissionConflictError(ValueError):
     """An idempotency key was reused for a different request payload."""
 
 
 class AdmissionService:
-    def __init__(self, store, checks: Iterable[object]) -> None:
+    def __init__(self, store, checks: Iterable[object], readiness=None) -> None:
         self._store = store
         self._checks = tuple(checks)
+        self._readiness = readiness
 
     def admit(self, request: AdmissionRequest) -> AdmissionResult:
         digest = request.digest()
@@ -113,7 +135,15 @@ class AdmissionService:
                 raise AdmissionConflictError("idempotency key is bound to a different request")
             return previous
 
-        checks = tuple(check.evaluate(request) for check in self._checks)
+        readiness = self._readiness.evaluate() if self._readiness is not None else None
+        readiness_check = () if readiness is None else (CheckResult(
+            name="platform-readiness",
+            category="self_verification",
+            required_check=True,
+            status="pass" if readiness.status in {"ready", "degraded"} else "fail",
+            detail=f"Platform readiness is {readiness.status}.",
+        ),)
+        checks = readiness_check + tuple(check.evaluate(request) for check in self._checks)
         failed = tuple(check for check in checks if check.required_check and check.status in {"fail", "not_run"})
         status = "blocked" if failed else "admitted"
         reason = "; ".join(check.detail or check.name for check in failed) if failed else None
@@ -127,6 +157,8 @@ class AdmissionService:
             status=status,
             request_digest=digest,
             reason=reason,
+            platform_readiness_id=getattr(readiness, "readiness_id", None),
+            identities=_request_identities(request),
         )
         event = RunEvent(
             event_id=f"{result.admission_id}-event",
@@ -142,3 +174,21 @@ class AdmissionService:
         self._store.apply(event)
         self._store.save_admission(request.idempotency_key, digest, result)
         return result
+
+
+def _request_identities(request: AdmissionRequest) -> Mapping[str, Mapping[str, object]]:
+    payload = request.payload
+    identities: dict[str, Mapping[str, object]] = {
+        "contract": {"kind": "atg.request", "id": "request-contract", "version": "1.0"},
+    }
+    source = payload.get("source")
+    if isinstance(source, Mapping) and isinstance(source.get("identity"), Mapping):
+        identities["source"] = source["identity"]
+    repository = payload.get("repository")
+    if isinstance(repository, Mapping):
+        identities["artifact"] = repository
+    for key in ("decision", "environment"):
+        value = payload.get(key)
+        if isinstance(value, Mapping):
+            identities[key] = value
+    return identities

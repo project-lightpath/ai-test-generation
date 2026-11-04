@@ -57,6 +57,8 @@ class AdmissionComponentTests(unittest.TestCase):
         status, first = self.post(body)
         self.assertEqual(status, 201)
         self.assertEqual(first["status"], "admitted")
+        self.assertEqual(first["platform_readiness_id"], "readiness-current")
+        self.assertEqual(first["identities"]["contract"]["kind"], "atg.request")
         status, duplicate = self.post(body)
         self.assertEqual(status, 200)
         self.assertEqual(duplicate, first)
