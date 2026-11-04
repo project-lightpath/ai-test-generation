@@ -1,0 +1,12 @@
+{
+  "contract": "atg.preflight",
+  "version": "1.0",
+  "preflight_id": "preflight-invalid-001",
+  "run_id": "run-001",
+  "evaluated_at": "2026-11-03T17:00:30Z",
+  "checks": [
+    {"name": "repository-access", "category": "repository", "required_check": true, "status": "fail", "detail": "The repository is unavailable."}
+  ],
+  "readiness": "ready",
+  "admission": "admitted"
+}

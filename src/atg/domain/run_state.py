@@ -76,9 +76,9 @@ class RunEvent:
             raise InvalidEventError(f"unsupported event type: {self.event_type}")
         if not isinstance(self.expected_revision, int) or isinstance(self.expected_revision, bool) or self.expected_revision < 0:
             raise InvalidEventError("expected_revision must be a non-negative integer")
-        _parse_timestamp(self.occurred_at)
+        _validate_event_timestamp(self.occurred_at, "occurred_at")
         if self.expires_at is not None:
-            _parse_timestamp(self.expires_at)
+            _validate_event_timestamp(self.expires_at, "expires_at")
         if self.checkpoint_kind is not None and self.checkpoint_kind not in CHECKPOINT_KINDS:
             raise InvalidEventError(f"unsupported checkpoint kind: {self.checkpoint_kind}")
         if self.decision is not None and self.decision not in DECISIONS:
@@ -405,3 +405,12 @@ def _parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise InvalidTransitionError(f"timestamp must include a UTC offset: {value!r}")
     return parsed
+
+
+def _validate_event_timestamp(value: object, field: str) -> None:
+    try:
+        _parse_timestamp(value)  # type: ignore[arg-type]
+    except InvalidEventError:
+        raise
+    except (InvalidTransitionError, TypeError, ValueError) as exc:
+        raise InvalidEventError(f"{field} must be a timezone-aware RFC 3339 timestamp") from exc

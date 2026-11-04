@@ -232,7 +232,10 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             self.request("POST", "/runs/run-http/events", missing_id)
         except HTTPError as error:
             self.assertEqual(error.code, 400)
-            self.assertEqual(json.loads(error.read()), {"error": "invalid event payload"})
+            self.assertEqual(
+                json.loads(error.read()),
+                {"error": "invalid event payload"},
+            )
             error.close()
         else:
             self.fail("malformed event should return HTTP 400")
@@ -264,7 +267,10 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             self.request("POST", "/runs/run-http/events", invalid_timestamp)
         except HTTPError as error:
             self.assertEqual(error.code, 400)
-            self.assertEqual(json.loads(error.read()), {"error": "invalid event payload"})
+            self.assertEqual(
+                json.loads(error.read()),
+                {"error": "occurred_at must be a timezone-aware RFC 3339 timestamp"},
+            )
             error.close()
         else:
             self.fail("numeric timestamp should return HTTP 400")

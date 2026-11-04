@@ -85,6 +85,12 @@ class ContractSchemaTests(unittest.TestCase):
                 self._load("invalid", "signed-differential-no-supporting-comparison.json")
             )
 
+    def test_preflight_cannot_admit_with_failed_required_check(self):
+        with self.assertRaises(ValidationError):
+            self._validator("preflight").validate(
+                self._load("invalid", "preflight-ready-required-check-failed.json")
+            )
+
     def test_checkpoint_state_and_decision_must_agree(self):
         checkpoint = self._load("examples", "checkpoint.json")
         checkpoint["decision"]["value"] = "rejected"

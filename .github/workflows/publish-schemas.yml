@@ -43,7 +43,7 @@ jobs:
           OVERRIDE_PROFILE: ${{ inputs.override_profile }}
         run: |
           if [ -n "$OVERRIDE_PROFILE" ]; then
-            if [[ ! "$OVERRIDE_PROFILE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            if [[ "$OVERRIDE_PROFILE" == "." || "$OVERRIDE_PROFILE" == ".." || ! "$OVERRIDE_PROFILE" =~ ^[A-Za-z0-9._-]+$ ]]; then
               echo "Invalid override profile name"
               exit 1
             fi

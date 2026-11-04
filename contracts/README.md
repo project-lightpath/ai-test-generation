@@ -44,6 +44,7 @@ inventing those upstream schemas.
 - Use `examples/` for small valid documents and `compatibility/` for migration tests.
 - Do not place credentials, customer data, or unapproved authoritative VEX documents in fixtures.
 - Treat `blocked`, `inconclusive`, `not_reached`, and `stated_gap` as explicit outcomes; never infer a pass from missing evidence.
+- A preflight with a failed or unrun required check is `blocked`, not `ready` or `admitted`.
 - Treat model output, repository content, generated code, and execution logs as untrusted data.
 
 ## Integration

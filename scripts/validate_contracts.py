@@ -72,6 +72,7 @@ def validate_contracts(
     invalid_fixtures = {
         "run-event": "run-event-missing-decision.json",
         "signed-differential": "signed-differential-no-supporting-comparison.json",
+        "preflight": "preflight-ready-required-check-failed.json",
     }
     for name, filename in invalid_fixtures.items():
         invalid_document = json.loads((invalid_root / filename).read_text())
