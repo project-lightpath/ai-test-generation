@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/execution.schema.json",
+  "title": "ATG execution result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "execution_id", "run_id", "generation_id", "subject", "subject_identity", "worker", "tool", "command", "command_digest", "environment", "status", "started_at", "finished_at"],
+  "properties": {
+    "contract": { "const": "atg.execution" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "execution_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "generation_id": { "$ref": "common.schema.json#/$defs/id" },
+    "subject": { "enum": ["base", "candidate"] },
+    "subject_identity": { "$ref": "common.schema.json#/$defs/identity" },
+    "worker": { "$ref": "common.schema.json#/$defs/identity" },
+    "tool": { "$ref": "common.schema.json#/$defs/identity" },
+    "command": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "command_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+    "environment": { "$ref": "common.schema.json#/$defs/identity" },
+    "status": { "enum": ["passed", "failed", "blocked", "not_reached", "inconclusive"] },
+    "exit_code": { "type": "integer" },
+    "started_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "finished_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "artifacts": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/artifact" } },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  }
+}

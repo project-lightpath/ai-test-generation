@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/feedback.schema.json",
+  "title": "ATG feedback",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "feedback_id", "run_id", "source", "stage", "category", "created_at", "message", "severity"],
+  "properties": {
+    "contract": { "const": "atg.feedback" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "feedback_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "checkpoint_id": { "$ref": "common.schema.json#/$defs/id" },
+    "source": { "enum": ["human", "model", "tool", "execution"] },
+    "actor": { "$ref": "common.schema.json#/$defs/identity" },
+    "stage": { "enum": ["analyze", "plan", "code", "execute", "review"] },
+    "category": { "enum": ["scope_change", "requirement_clarification", "expected_behavior", "excluded_case", "fixture_preference", "safety_constraint", "classification_override", "assertion_correction", "infrastructure", "other"] },
+    "applies_to": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "resolution": { "enum": ["open", "applied", "rejected", "superseded"] },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "message": { "type": "string", "minLength": 1 },
+    "severity": { "enum": ["info", "warning", "error"] },
+    "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } }
+  }
+}

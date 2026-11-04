@@ -1,0 +1,10 @@
+{
+  "contract": "atg.run_event",
+  "version": "1.0",
+  "event_id": "event-invalid-001",
+  "run_id": "run-001",
+  "event_type": "decision_recorded",
+  "expected_revision": 3,
+  "occurred_at": "2026-11-03T17:01:01Z",
+  "checkpoint_id": "checkpoint-plan-001"
+}

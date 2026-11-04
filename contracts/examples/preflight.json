@@ -1,0 +1,14 @@
+{
+  "contract": "atg.preflight",
+  "version": "1.0",
+  "preflight_id": "preflight-001",
+  "run_id": "run-001",
+  "evaluated_at": "2026-11-03T17:00:30Z",
+  "checks": [
+    {"name": "repository-access", "category": "repository", "required_check": true, "status": "pass", "detail": "The pinned revision is readable."},
+    {"name": "policy-admission", "category": "policy", "required_check": true, "status": "pass", "detail": "The request has an approved policy decision."}
+  ],
+  "readiness": "ready",
+  "admission": "admitted",
+  "limitations": []
+}

@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/common.schema.json",
+  "title": "ATG v1 common definitions",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "digest": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$"
+    },
+    "payload_digest": {
+      "type": "string",
+      "pattern": "^sha256:[A-Fa-f0-9]{64}$"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "locator"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/identity" },
+        "locator": { "type": "string", "minLength": 1 },
+        "retrieved_at": { "$ref": "#/$defs/timestamp" },
+        "content_digest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "media_type", "digest"],
+      "properties": {
+        "artifact_id": { "$ref": "#/$defs/id" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "digest": { "$ref": "#/$defs/digest" },
+        "uri": { "type": "string", "format": "uri" },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "description"],
+      "properties": {
+        "code": { "$ref": "#/$defs/id" },
+        "description": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["info", "warning", "error"] }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "role", "authorization_ref"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/identity" },
+        "role": { "type": "string", "minLength": 1 },
+        "authorization_ref": { "$ref": "#/$defs/id" },
+        "authenticated_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "outcome": {
+      "enum": [
+        "planned",
+        "generated",
+        "collected",
+        "passed",
+        "failed",
+        "validated",
+        "reproduced",
+        "fixed_behavior",
+        "reached_not_reproduced",
+        "not_reached",
+        "not_applicable",
+        "not_evaluable",
+        "environment_mismatch",
+        "blocked",
+        "inconclusive",
+        "needs_human_review",
+        "stated_gap"
+      ]
+    },
+    "contract_version": { "const": "1.0" }
+  }
+}

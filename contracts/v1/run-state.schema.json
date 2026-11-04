@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/run-state.schema.json",
+  "title": "ATG durable run state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "run_id", "status", "revision", "updated_at", "processed_event_ids", "event_fingerprints"],
+  "properties": {
+    "contract": { "const": "atg.run_state" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "status": { "enum": ["requested", "admitted", "analyzing", "analysis_review", "plan_review", "planning", "code_review", "coding", "execution_review", "executing", "quality_review", "completed", "blocked", "inconclusive", "stated_gap", "cancelled"] },
+    "revision": { "type": "integer", "minimum": 0 },
+    "updated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "active_checkpoint_id": { "$ref": "common.schema.json#/$defs/id" },
+    "active_checkpoint_expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "checkpoint_return_status": { "enum": ["admitted", "analyzing", "planning", "coding", "executing", "quality_review"] },
+    "superseded_checkpoint_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "processed_event_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "event_fingerprints": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
+    },
+    "terminal_reason": { "type": "string" }
+  }
+}

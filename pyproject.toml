@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atg-reference"
+version = "0.1.0"
+description = "AI Test Generation service and contract components"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+atg-run-state-server = "atg.component.run_state_server:main"
+
+[project.optional-dependencies]
+test = ["jsonschema>=4.23,<5", "rfc3339-validator>=0.1.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

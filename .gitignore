@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.sqlite3
+PR-SUMMARY-*.md
+.kilo/kilo.json
+.kilo/kilo.jsonc
+.kilo/local-context.md

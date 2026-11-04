@@ -1,16 +1,8 @@
-# Ports
+# ATG Service Ports
 
-Ports are the stable interfaces between ATG core behavior and replaceable external implementations.
+The persistence port in `run_state.py` defines the behavior required by the
+ATG service: atomic event application, revision compare-and-swap,
+event-id/payload-digest idempotency, snapshot loading, and journal replay.
 
-Expected port families include input, policy, repository/source, framework, model, execution, evidence, and conditional source-control publication.
-
-Each port must document:
-
-- Version and owner.
-- Input/output schema.
-- Authentication and authorization expectations.
-- Failure, timeout, cancellation, and retry behavior.
-- Local fake/simulator contract.
-- Real integration test location.
-
-Vendor SDK types, Tekton types, GitLab types, and model-framework types must stay inside adapters.
+The initial implementation may evolve from Python to Java/Quarkus or another
+selected runtime without changing the JSON contracts or observable semantics.

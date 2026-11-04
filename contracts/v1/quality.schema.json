@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/quality.schema.json",
+  "title": "ATG quality gate result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "quality_id", "run_id", "evaluated_at", "execution_refs", "checks", "outcome"],
+  "properties": {
+    "contract": { "const": "atg.quality" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "quality_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "evaluated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "execution_refs": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["pass", "fail", "inconclusive", "not_run"] },
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "outcome": { "$ref": "common.schema.json#/$defs/outcome" },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } },
+    "metrics": { "type": "object", "additionalProperties": { "type": ["number", "integer", "string", "boolean"] } },
+    "triage": { "enum": ["passed", "test_failure", "setup_failure", "harness_uncertainty", "needs_human_review"] },
+    "assertion_quality": { "enum": ["strong", "weak", "inconclusive", "not_evaluated"] },
+    "mutation": { "type": "object", "additionalProperties": false, "properties": { "status": { "enum": ["passed", "failed", "blocked", "not_run"] }, "score": { "type": "number", "minimum": 0, "maximum": 1 }, "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } } } },
+    "stability": { "type": "object", "additionalProperties": false, "properties": { "runs": { "type": "integer", "minimum": 1 }, "failures": { "type": "integer", "minimum": 0 }, "status": { "enum": ["stable", "flaky", "inconclusive", "not_run"] } } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "enum": ["validated", "reproduced", "fixed_behavior"] } } },
+      "then": {
+        "properties": {
+          "checks": {
+            "contains": {
+              "type": "object",
+              "required": ["status"],
+              "properties": { "status": { "const": "pass" } }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

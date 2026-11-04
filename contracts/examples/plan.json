@@ -1,0 +1,17 @@
+{
+  "contract": "atg.plan",
+  "version": "1.0",
+  "plan_id": "plan-001",
+  "run_id": "run-001",
+  "objective_refs": ["objective-001"],
+  "steps": [
+    {"step_id": "step-analyze", "stage": "analyze", "action": "Inspect the target implementation and existing tests.", "expected_evidence": ["evidence-001"]},
+    {"step_id": "step-code", "stage": "code", "action": "Generate the smallest regression test."},
+    {"step_id": "step-execute", "stage": "execute", "action": "Run base and candidate verification."}
+  ],
+  "status": "approved",
+  "created_at": "2026-11-03T17:01:00Z",
+  "approved_by": "reviewer-001",
+  "assumptions": [],
+  "gaps": []
+}

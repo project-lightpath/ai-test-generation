@@ -1,0 +1,16 @@
+{
+  "contract": "atg.generation",
+  "version": "1.0",
+  "generation_id": "generation-001",
+  "run_id": "run-001",
+  "plan_id": "plan-001",
+  "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"},
+  "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "candidate-001"},
+  "patch_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "changed_files": ["src/test/java/AppTest.java"],
+  "status": "verified",
+  "created_at": "2026-11-03T17:03:00Z",
+  "model": {"kind": "model", "id": "approved-model", "version": "1"},
+  "artifacts": [],
+  "limitations": []
+}

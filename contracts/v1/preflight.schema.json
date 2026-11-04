@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/preflight.schema.json",
+  "title": "ATG stage-zero preflight",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "preflight_id", "run_id", "evaluated_at", "checks", "readiness", "admission"],
+  "properties": {
+    "contract": { "const": "atg.preflight" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "preflight_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "evaluated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+          "required": ["name", "required_check", "status"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+          "category": { "enum": ["self_verification", "repository", "source", "toolchain", "model", "execution", "policy", "evidence", "signing"] },
+          "required_check": { "type": "boolean" },
+          "status": { "enum": ["pass", "fail", "warn", "not_run"] },
+          "detail": { "type": "string" },
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } }
+        }
+      }
+    },
+    "readiness": { "enum": ["ready", "blocked", "not_evaluable"] },
+    "admission": { "enum": ["admitted", "rejected", "blocked"] },
+    "failure_register_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
+    "adapter": { "$ref": "common.schema.json#/$defs/identity" },
+    "model": { "$ref": "common.schema.json#/$defs/identity" },
+    "worker": { "$ref": "common.schema.json#/$defs/identity" },
+    "evidence_store": { "$ref": "common.schema.json#/$defs/identity" },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "checks": {
+            "contains": {
+              "properties": {
+                "required_check": { "const": true },
+                "status": { "enum": ["fail", "not_run"] }
+              },
+              "required": ["required_check", "status"]
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "readiness": { "const": "blocked" },
+          "admission": { "const": "blocked" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "readiness": { "const": "ready" } } },
+      "then": {
+        "properties": {
+          "checks": {
+            "not": {
+              "contains": {
+                "properties": {
+                  "required_check": { "const": true },
+                  "status": { "enum": ["fail", "not_run"] }
+                },
+                "required": ["required_check", "status"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "admission": { "const": "admitted" } } },
+      "then": {
+        "properties": {
+          "checks": {
+            "not": {
+              "contains": {
+                "properties": {
+                  "required_check": { "const": true },
+                  "status": { "enum": ["fail", "not_run"] }
+                },
+                "required": ["required_check", "status"]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

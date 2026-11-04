@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/checkpoint.schema.json",
+  "title": "ATG durable review checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "checkpoint_id", "run_id", "kind", "revision", "state", "created_at"],
+  "properties": {
+    "contract": { "const": "atg.checkpoint" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "checkpoint_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "kind": { "enum": ["analysis_review", "plan_review", "code_review", "execution_review", "quality_review"] },
+    "revision": { "type": "integer", "minimum": 0 },
+    "state": { "enum": ["pending", "approved", "rejected", "expired", "superseded"] },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "superseded_by": { "$ref": "common.schema.json#/$defs/id" },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_id", "reviewer", "decided_at", "value"],
+      "properties": {
+        "decision_id": { "$ref": "common.schema.json#/$defs/id" },
+        "reviewer": { "$ref": "common.schema.json#/$defs/reviewer" },
+        "decided_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "value": { "enum": ["approved", "rejected", "blocked", "stated_gap"] },
+        "rationale": { "type": "string" }
+      }
+    },
+    "supersedes": { "$ref": "common.schema.json#/$defs/id" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "enum": ["approved", "rejected"] } } },
+      "then": { "required": ["decision"] }
+    },
+    {
+      "if": { "properties": { "state": { "const": "approved" } } },
+      "then": { "properties": { "decision": { "properties": { "value": { "const": "approved" } } } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "rejected" } } },
+      "then": { "properties": { "decision": { "properties": { "value": { "const": "rejected" } } } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "superseded" } } },
+      "then": { "required": ["superseded_by"] }
+    },
+    {
+      "if": { "properties": { "state": { "const": "expired" } } },
+      "then": { "required": ["expires_at"] }
+    }
+  ]
+}

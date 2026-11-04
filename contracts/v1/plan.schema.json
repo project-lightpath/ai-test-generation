@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/plan.schema.json",
+  "title": "ATG test plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "version", "plan_id", "run_id", "objective_refs", "steps", "status", "created_at"],
+  "properties": {
+    "contract": { "const": "atg.plan" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "plan_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "objective_refs": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step_id", "stage", "action"],
+        "properties": {
+          "step_id": { "$ref": "common.schema.json#/$defs/id" },
+          "stage": { "enum": ["analyze", "plan", "code", "execute", "evaluate"] },
+          "action": { "type": "string", "minLength": 1 },
+          "test_level": { "enum": ["unit", "component", "integration", "contract", "e2e"] },
+          "setup": { "type": "array", "items": { "type": "string" } },
+          "oracle": { "type": "array", "items": { "type": "string" } },
+          "cleanup": { "type": "array", "items": { "type": "string" } },
+          "mock_policy": { "type": "array", "items": { "type": "string" } },
+          "exclusions": { "type": "array", "items": { "type": "string" } },
+          "scenario_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+          "command": { "type": "string" },
+          "expected_evidence": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } }
+        }
+      }
+    },
+    "status": { "enum": ["draft", "approved", "rejected", "superseded"] },
+    "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "approved_by": { "$ref": "common.schema.json#/$defs/id" },
+    "assumptions": { "type": "array", "items": { "type": "string" } },
+    "gaps": { "type": "array", "items": { "type": "string" } }
+    ,"coverage_matrix": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["objective_ref", "disposition"],
+        "properties": {
+          "objective_ref": { "$ref": "common.schema.json#/$defs/id" },
+          "disposition": { "enum": ["planned", "excluded", "stated_gap", "not_evaluable"] },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  }
+}

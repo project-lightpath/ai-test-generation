@@ -6,8 +6,8 @@ The product repository is organized around contracts, ports, adapters, tests, ex
 
 | Workstream | Primary paths | Integration point |
 |---|---|---|
-| VI: VEX and policy input | `contracts/`, `src/atg/adapters/input/`, `src/atg/adapters/policy/`, input fixtures | Versioned VPE/VEX and policy contracts |
-| TF: target and framework | `src/atg/adapters/repository/`, `src/atg/adapters/framework/`, target metadata | Java 21/Quarkus profile and framework port |
+| VI: VEX and policy input | `contracts/`, future production adapters, input fixtures | Versioned VPE/VEX and policy contracts |
+| TF: target and framework | future production adapters, target metadata | Java 21/Quarkus profile and framework port |
 | TG: core pipeline | `src/atg/domain/`, `src/atg/application/`, `src/atg/workflow/`, `src/atg/gates/`, `src/atg/provenance/` | Driver-neutral lifecycle and evidence contracts |
 | TG-S1/S2/S3 | `experiments/`, replay tests, architecture docs | Spike reports and port/ownership recommendations |
 | Final demo | `deploy/final-demo/`, runbooks | ATG public interfaces only |

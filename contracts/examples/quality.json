@@ -1,0 +1,13 @@
+{
+  "contract": "atg.quality",
+  "version": "1.0",
+  "quality_id": "quality-001",
+  "run_id": "run-001",
+  "evaluated_at": "2026-11-03T17:05:00Z",
+  "execution_refs": ["execution-base-001", "execution-candidate-001"],
+  "checks": [
+    {"name": "differential-regression", "status": "pass", "evidence_refs": ["evidence-001"]}
+  ],
+  "outcome": "validated",
+  "limitations": []
+}
