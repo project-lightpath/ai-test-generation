@@ -21,6 +21,8 @@ from atg.domain.run_state import (
     StaleEventError,
     TransitionResult,
     event_fingerprint,
+    validate_identifier,
+    validate_timestamp,
 )
 
 
@@ -60,6 +62,8 @@ class SQLiteRunStateStore:
 
     def create_run(self, run_id: str, created_at: str) -> RunState:
         with self._lock:
+            validate_identifier(run_id, "run_id")
+            validate_timestamp(created_at, "created_at")
             state = RunState(run_id=run_id, updated_at=created_at)
             document = json.dumps(state.to_document(), sort_keys=True)
             self._connection.execute(

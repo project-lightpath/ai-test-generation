@@ -109,14 +109,20 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 _require_related(
                     document, "atg.generation", document["generation_id"], require, errors, "differential.generation_id"
                 )
-            _require_related(
+            base_execution = _require_related(
                 document, "atg.execution", document.get("base_execution_id"), require, errors,
                 "differential.base_execution_id",
             )
-            _require_related(
+            candidate_execution = _require_related(
                 document, "atg.execution", document.get("candidate_execution_id"), require, errors,
                 "differential.candidate_execution_id",
             )
+            if document.get("base_execution_id") == document.get("candidate_execution_id"):
+                errors.append("differential base and candidate executions must differ")
+            if base_execution is not None and base_execution.get("subject") != "base":
+                errors.append("differential.base_execution_id must reference a base execution")
+            if candidate_execution is not None and candidate_execution.get("subject") != "candidate":
+                errors.append("differential.candidate_execution_id must reference a candidate execution")
             _require_related(document, "atg.quality", document.get("quality_id"), require, errors, "differential.quality_id")
             _require_related(
                 document, "atg.provenance", document.get("provenance_id"), require, errors,

@@ -4,7 +4,7 @@
   "title": "ATG signed differential result",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "differential_id", "run_id", "request_id", "base_execution_id", "candidate_execution_id", "outcome", "comparisons", "quality_id", "provenance_id", "review_and_signoff"],
+  "required": ["contract", "version", "differential_id", "run_id", "request_id", "base_execution_id", "candidate_execution_id", "outcome", "comparisons", "quality_id", "provenance_id", "review_and_signoff", "signature"],
   "properties": {
     "contract": { "const": "atg.signed_differential" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },

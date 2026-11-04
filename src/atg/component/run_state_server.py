@@ -17,6 +17,8 @@ from atg.domain.run_state import (
     InvalidEventError,
     RunEvent,
     RunStateError,
+    validate_identifier,
+    validate_timestamp,
 )
 
 MAX_REQUEST_BYTES = 1024 * 1024
@@ -56,8 +58,16 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 if parts == ["runs"]:
                     if not isinstance(body, dict):
                         raise BadRequestError("request body must be a JSON object")
-                    if not body.get("run_id") or not body.get("created_at"):
+                    if not isinstance(body.get("run_id"), str) or not body["run_id"]:
                         raise BadRequestError("run creation requires run_id and created_at")
+                    try:
+                        validate_identifier(body["run_id"], "run_id")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body.get("created_at"), "created_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
                     state = store.create_run(body["run_id"], body["created_at"])
                     self._respond(201, state.to_document())
                     return

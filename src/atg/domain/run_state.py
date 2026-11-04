@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 import hashlib
 import json
+import re
 from typing import Mapping
 
 
@@ -47,6 +48,12 @@ EVENT_TYPES = frozenset({
 })
 CHECKPOINT_KINDS = frozenset({"analysis_review", "plan_review", "code_review", "execution_review", "quality_review"})
 DECISIONS = frozenset({"approved", "rejected", "blocked", "stated_gap"})
+STATE_STATUSES = frozenset({
+    "requested", "admitted", "analyzing", "analysis_review", "plan_review", "planning",
+    "code_review", "coding", "execution_review", "executing", "quality_review",
+    "completed", "blocked", "inconclusive", "stated_gap", "cancelled",
+})
+ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
 
 @dataclass(frozen=True)
@@ -70,8 +77,10 @@ class RunEvent:
     expires_at: str | None = None
 
     def __post_init__(self) -> None:
-        if not all(isinstance(value, str) and value for value in (self.event_id, self.run_id, self.event_type)):
-            raise InvalidEventError("event_id, run_id, and event_type are required strings")
+        validate_identifier(self.event_id, "event_id")
+        validate_identifier(self.run_id, "run_id")
+        if not isinstance(self.event_type, str) or not self.event_type:
+            raise InvalidEventError("event_type is required as a string")
         if self.event_type not in EVENT_TYPES:
             raise InvalidEventError(f"unsupported event type: {self.event_type}")
         if not isinstance(self.expected_revision, int) or isinstance(self.expected_revision, bool) or self.expected_revision < 0:
@@ -79,6 +88,14 @@ class RunEvent:
         _validate_event_timestamp(self.occurred_at, "occurred_at")
         if self.expires_at is not None:
             _validate_event_timestamp(self.expires_at, "expires_at")
+        for field_name in ("checkpoint_id", "supersedes", "actor_id", "authorization_ref", "decision_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                validate_identifier(value, field_name)
+        for field_name in ("actor_role", "reason"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, str):
+                raise InvalidEventError(f"{field_name} must be a string when provided")
         if self.checkpoint_kind is not None and self.checkpoint_kind not in CHECKPOINT_KINDS:
             raise InvalidEventError(f"unsupported checkpoint kind: {self.checkpoint_kind}")
         if self.decision is not None and self.decision not in DECISIONS:
@@ -163,8 +180,7 @@ class RunState:
 
     @classmethod
     def initial(cls, run_id: str) -> "RunState":
-        if not run_id:
-            raise ValueError("run_id is required")
+        validate_identifier(run_id, "run_id")
         return cls(run_id=run_id)
 
     def apply(self, event: RunEvent) -> TransitionResult:
@@ -357,19 +373,54 @@ class RunState:
     def from_document(cls, document: Mapping[str, object]) -> "RunState":
         """Restore state without dropping replay/idempotency metadata."""
 
+        if not isinstance(document, Mapping):
+            raise ValueError("run-state document must be an object")
         if document.get("contract") != "atg.run_state" or document.get("version") != "1.0":
             raise ValueError("unsupported run-state document")
+        run_id = document.get("run_id")
+        status = document.get("status")
+        revision = document.get("revision")
+        updated_at = document.get("updated_at")
+        validate_identifier(run_id, "run_id")
+        if not isinstance(status, str) or status not in STATE_STATUSES:
+            raise ValueError("status is invalid")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            raise ValueError("revision must be a non-negative integer")
+        if not isinstance(updated_at, str):
+            raise ValueError("updated_at must be a timestamp string")
+        _parse_timestamp(updated_at)
+        for field_name in ("superseded_checkpoint_ids", "processed_event_ids"):
+            values = document.get(field_name, [])
+            if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+                raise ValueError(f"{field_name} must be an array of strings")
+            for value in values:
+                validate_identifier(value, field_name)
+        fingerprints = document.get("event_fingerprints", {})
+        if not isinstance(fingerprints, dict) or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in fingerprints.items()
+        ):
+            raise ValueError("event_fingerprints must be an object of strings")
+        for field_name in ("active_checkpoint_id", "active_checkpoint_expires_at", "checkpoint_return_status", "terminal_reason"):
+            value = document.get(field_name)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{field_name} must be a string when provided")
+        if document.get("active_checkpoint_id") is not None:
+            validate_identifier(document["active_checkpoint_id"], "active_checkpoint_id")
+        for key in fingerprints:
+            validate_identifier(key, "event_fingerprints key")
+        if document.get("active_checkpoint_expires_at") is not None:
+            _parse_timestamp(document["active_checkpoint_expires_at"])
         return cls(
-            run_id=str(document["run_id"]),
-            status=str(document["status"]),
-            revision=int(document["revision"]),
-            updated_at=str(document["updated_at"]),
+            run_id=run_id,
+            status=status,
+            revision=revision,
+            updated_at=updated_at,
             active_checkpoint_id=document.get("active_checkpoint_id") or None,
             active_checkpoint_expires_at=document.get("active_checkpoint_expires_at") or None,
             checkpoint_return_status=document.get("checkpoint_return_status") or None,
             superseded_checkpoint_ids=tuple(document.get("superseded_checkpoint_ids", [])),
             processed_event_ids=tuple(document.get("processed_event_ids", [])),
-            event_fingerprints=dict(document.get("event_fingerprints", {})),
+            event_fingerprints=fingerprints,
             terminal_reason=document.get("terminal_reason") or None,
         )
 
@@ -414,3 +465,16 @@ def _validate_event_timestamp(value: object, field: str) -> None:
         raise
     except (InvalidTransitionError, TypeError, ValueError) as exc:
         raise InvalidEventError(f"{field} must be a timezone-aware RFC 3339 timestamp") from exc
+
+
+def validate_timestamp(value: object, field: str = "timestamp") -> None:
+    """Validate a timestamp at service ingress without constructing an event."""
+
+    _validate_event_timestamp(value, field)
+
+
+def validate_identifier(value: object, field: str = "identifier") -> None:
+    """Validate a v1 identifier used in event and run-state contracts."""
+
+    if not isinstance(value, str) or not value or len(value) > 256 or ID_PATTERN.fullmatch(value) is None:
+        raise InvalidEventError(f"{field} must be a valid v1 identifier")

@@ -323,6 +323,16 @@ class RunStateTests(unittest.TestCase):
                 )
             )
 
+    def test_persisted_state_rejects_coercible_corruption(self):
+        document = RunState(run_id="run-1", revision=1, updated_at="2026-11-03T17:00:00Z").to_document()
+        document["revision"] = "1"
+        with self.assertRaises(ValueError):
+            RunState.from_document(document)
+        document["revision"] = 1
+        document["run_id"] = 123
+        with self.assertRaises(ValueError):
+            RunState.from_document(document)
+
     def test_quality_outcomes_are_explicit(self):
         expected = {
             "quality_passed": "completed",

@@ -1,5 +1,6 @@
 import json
 import pathlib
+import copy
 import sys
 import unittest
 
@@ -85,6 +86,12 @@ class ContractSchemaTests(unittest.TestCase):
                 self._load("invalid", "signed-differential-no-supporting-comparison.json")
             )
 
+    def test_signed_differential_requires_signature(self):
+        differential = self._load("examples", "signed-differential.json")
+        del differential["signature"]
+        with self.assertRaises(ValidationError):
+            self._validator("signed-differential").validate(differential)
+
     def test_preflight_cannot_admit_with_failed_required_check(self):
         with self.assertRaises(ValidationError):
             self._validator("preflight").validate(
@@ -96,6 +103,24 @@ class ContractSchemaTests(unittest.TestCase):
             self._validator("preflight").validate(
                 self._load("invalid", "preflight-not-evaluable-rejected-required-check-failed.json")
             )
+
+    def test_each_preflight_discriminator_is_checked_independently(self):
+        base = self._load("examples", "preflight.json")
+        for status in ("fail", "not_run"):
+            with self.subTest(discriminator="readiness", status=status):
+                document = copy.deepcopy(base)
+                document["checks"][0]["status"] = status
+                document["readiness"] = "ready"
+                document["admission"] = "blocked"
+                with self.assertRaises(ValidationError):
+                    self._validator("preflight").validate(document)
+            with self.subTest(discriminator="admission", status=status):
+                document = copy.deepcopy(base)
+                document["checks"][0]["status"] = status
+                document["readiness"] = "blocked"
+                document["admission"] = "admitted"
+                with self.assertRaises(ValidationError):
+                    self._validator("preflight").validate(document)
 
     def test_checkpoint_state_and_decision_must_agree(self):
         checkpoint = self._load("examples", "checkpoint.json")

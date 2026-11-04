@@ -101,6 +101,21 @@ class ContractIntegrityTests(unittest.TestCase):
             validate_documents(documents)
         self.assertIn("every document requires a contract and typed identifier", raised.exception.errors)
 
+    def test_differential_requires_distinct_base_and_candidate_subjects(self):
+        documents = graph_documents()
+        differential = next(document for document in documents if document.get("differential_id") == "differential-1")
+        candidate = next(document for document in documents if document.get("execution_id") == "execution-candidate")
+        candidate["subject"] = "base"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("differential.candidate_execution_id must reference a candidate execution", raised.exception.errors)
+
+        candidate["subject"] = "candidate"
+        differential["candidate_execution_id"] = "execution-base"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("differential base and candidate executions must differ", raised.exception.errors)
+
 
 if __name__ == "__main__":
     unittest.main()

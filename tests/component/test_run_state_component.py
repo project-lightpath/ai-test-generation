@@ -210,6 +210,21 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             self.fail("stale event should return HTTP 409")
 
     def test_event_ingress_rejects_bad_contract_version_and_malformed_payloads(self):
+        for payload, expected in (
+            ({"run_id": 123, "created_at": "2026-11-03T17:00:00Z"}, "run creation requires run_id and created_at"),
+            ({"run_id": "bad-time", "created_at": 12345}, "created_at must be a timezone-aware RFC 3339 timestamp"),
+            ({"run_id": "../", "created_at": "2026-11-03T17:00:00Z"}, "run_id must be a valid v1 identifier"),
+            ({"run_id": "a" * 257, "created_at": "2026-11-03T17:00:00Z"}, "run_id must be a valid v1 identifier"),
+        ):
+            try:
+                self.request("POST", "/runs", payload)
+            except HTTPError as error:
+                self.assertEqual(error.code, 400)
+                self.assertEqual(json.loads(error.read()), {"error": expected})
+                error.close()
+            else:
+                self.fail("invalid run creation input should return HTTP 400")
+
         self.request("POST", "/runs", {"run_id": "run-http", "created_at": "2026-11-03T17:00:00Z"})
         event = admit_event(run_id="run-http")
         payload = {"contract": "atg.wrong", "version": "1.0", **event.__dict__}
@@ -256,7 +271,7 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             self.assertEqual(error.code, 400)
             self.assertEqual(
                 json.loads(error.read()),
-                {"error": "event_id, run_id, and event_type are required strings"},
+                {"error": "event_id must be a valid v1 identifier"},
             )
             error.close()
         else:
@@ -274,6 +289,25 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             error.close()
         else:
             self.fail("numeric timestamp should return HTTP 400")
+
+        invalid_field_type = {
+            "contract": "atg.run_event",
+            "version": "1.0",
+            **event.__dict__,
+            "event_id": "event-invalid-checkpoint",
+            "checkpoint_id": 123,
+        }
+        try:
+            self.request("POST", "/runs/run-http/events", invalid_field_type)
+        except HTTPError as error:
+            self.assertEqual(error.code, 400)
+            self.assertEqual(
+                json.loads(error.read()),
+                {"error": "checkpoint_id must be a valid v1 identifier"},
+            )
+            error.close()
+        else:
+            self.fail("numeric checkpoint ID should return HTTP 400")
 
         invalid_revision = {
             "contract": "atg.run_event",
