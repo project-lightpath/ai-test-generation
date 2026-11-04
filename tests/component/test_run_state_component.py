@@ -189,6 +189,15 @@ class RunStateHTTPComponentTests(unittest.TestCase):
         self.assertEqual(fetched["run_id"], "run-http")
         self.assertEqual(fetched["status"], "admitted")
         self.assertEqual(fetched["revision"], 1)
+        status, events = self.request("GET", "/runs/run-http/events")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(events["events"]), 1)
+        self.assertEqual(
+            events["events"][0]["event_id"],
+            "event-1",
+        )
+        self.assertEqual(events["events"][0]["event_type"], "admit")
+        self.assertEqual(events["events"][0]["run_id"], "run-http")
 
     def test_process_boundary_returns_conflict_for_stale_event(self):
         self.request("POST", "/runs", {"run_id": "run-http", "created_at": "2026-11-03T17:00:00Z"})

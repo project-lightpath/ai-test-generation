@@ -35,6 +35,7 @@ class RunStateTests(unittest.TestCase):
         state = state.apply(
             event("run-1", "e4", 3, "checkpoint_created", checkpoint_id="cp-analysis", checkpoint_kind="analysis_review")
         ).state
+        self.assertEqual(state.status, "analysis_review")
         state = state.apply(
             event(
                 "run-1", "e5", 4, "decision_recorded", checkpoint_id="cp-analysis", decision="approved",
@@ -47,6 +48,7 @@ class RunStateTests(unittest.TestCase):
         state = state.apply(
             event("run-1", "e7", 6, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
         ).state
+        self.assertEqual(state.status, "plan_review")
         state = state.apply(
             event(
                 "run-1", "e8", 7, "decision_recorded", checkpoint_id="cp-plan", decision="approved",
@@ -54,6 +56,7 @@ class RunStateTests(unittest.TestCase):
                 authorization_ref="approval-policy-1",
             )
         ).state
+        self.assertEqual(state.status, "coding")
         state = state.apply(event("run-1", "e9", 8, "generation_started")).state
         state = state.apply(event("run-1", "e10", 9, "generation_completed")).state
         state = state.apply(
@@ -66,6 +69,7 @@ class RunStateTests(unittest.TestCase):
                 checkpoint_kind="code_review",
             )
         ).state
+        self.assertEqual(state.status, "code_review")
         state = state.apply(
             event(
                 "run-1", "e12", 11, "decision_recorded", checkpoint_id="cp-code", decision="approved",
@@ -73,6 +77,7 @@ class RunStateTests(unittest.TestCase):
                 authorization_ref="approval-policy-1",
             )
         ).state
+        self.assertEqual(state.status, "executing")
         state = state.apply(event("run-1", "e13", 12, "execution_started")).state
         state = state.apply(event("run-1", "e14", 13, "execution_completed")).state
         state = state.apply(
@@ -85,6 +90,7 @@ class RunStateTests(unittest.TestCase):
                 checkpoint_kind="execution_review",
             )
         ).state
+        self.assertEqual(state.status, "execution_review")
         state = state.apply(
             event(
                 "run-1", "e16", 15, "decision_recorded", checkpoint_id="cp-exec", decision="approved",
@@ -92,11 +98,13 @@ class RunStateTests(unittest.TestCase):
                 authorization_ref="approval-policy-1",
             )
         ).state
+        self.assertEqual(state.status, "quality_review")
         state = state.apply(
             event(
                 "run-1", "e17", 16, "checkpoint_created", checkpoint_id="cp-quality", checkpoint_kind="quality_review"
             )
         ).state
+        self.assertEqual(state.status, "quality_review")
         state = state.apply(
             event(
                 "run-1", "e18", 17, "decision_recorded", checkpoint_id="cp-quality", decision="approved",
@@ -106,6 +114,8 @@ class RunStateTests(unittest.TestCase):
         ).state
         self.assertEqual(state.status, "completed")
         self.assertEqual(state.revision, 18)
+        self.assertIsNone(state.active_checkpoint_id)
+        self.assertEqual(len(state.processed_event_ids), 18)
 
     def test_exact_retry_is_idempotent(self):
         state = RunState.initial("run-1")
@@ -328,10 +338,30 @@ class RunStateTests(unittest.TestCase):
         document["revision"] = "1"
         with self.assertRaises(ValueError):
             RunState.from_document(document)
+        document["run_id"] = "run-1"
+        document["event_fingerprints"] = {"event-1": "not-a-digest"}
+        with self.assertRaises(ValueError):
+            RunState.from_document(document)
         document["revision"] = 1
         document["run_id"] = 123
         with self.assertRaises(ValueError):
             RunState.from_document(document)
+
+    def test_cancel_clears_active_checkpoint_state(self):
+        state = RunState(
+            run_id="run-1",
+            status="plan_review",
+            revision=0,
+            updated_at="2026-11-03T17:00:00Z",
+            active_checkpoint_id="checkpoint-1",
+            active_checkpoint_expires_at="2026-11-04T17:00:00Z",
+            checkpoint_return_status="planning",
+        )
+        result = state.apply(event("run-1", "e1", 0, "cancel", reason="operator cancelled"))
+        self.assertEqual(result.state.status, "cancelled")
+        self.assertIsNone(result.state.active_checkpoint_id)
+        self.assertIsNone(result.state.active_checkpoint_expires_at)
+        self.assertIsNone(result.state.checkpoint_return_status)
 
     def test_quality_outcomes_are_explicit(self):
         expected = {

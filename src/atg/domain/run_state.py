@@ -408,6 +408,8 @@ class RunState:
             validate_identifier(document["active_checkpoint_id"], "active_checkpoint_id")
         for key in fingerprints:
             validate_identifier(key, "event_fingerprints key")
+        if any(not re.fullmatch(r"[A-Fa-f0-9]{64}", value) for value in fingerprints.values()):
+            raise ValueError("event_fingerprints values must be SHA-256 hex digests")
         if document.get("active_checkpoint_expires_at") is not None:
             _parse_timestamp(document["active_checkpoint_expires_at"])
         return cls(
