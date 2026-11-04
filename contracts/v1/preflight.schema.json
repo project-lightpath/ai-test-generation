@@ -39,6 +39,27 @@
   },
   "allOf": [
     {
+      "if": {
+        "properties": {
+          "checks": {
+            "contains": {
+              "properties": {
+                "required_check": { "const": true },
+                "status": { "enum": ["fail", "not_run"] }
+              },
+              "required": ["required_check", "status"]
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "readiness": { "const": "blocked" },
+          "admission": { "const": "blocked" }
+        }
+      }
+    },
+    {
       "if": { "properties": { "readiness": { "const": "ready" } } },
       "then": {
         "properties": {

@@ -91,6 +91,12 @@ class ContractSchemaTests(unittest.TestCase):
                 self._load("invalid", "preflight-ready-required-check-failed.json")
             )
 
+    def test_not_evaluable_rejected_preflight_cannot_bypass_blocked_state(self):
+        with self.assertRaises(ValidationError):
+            self._validator("preflight").validate(
+                self._load("invalid", "preflight-not-evaluable-rejected-required-check-failed.json")
+            )
+
     def test_checkpoint_state_and_decision_must_agree(self):
         checkpoint = self._load("examples", "checkpoint.json")
         checkpoint["decision"]["value"] = "rejected"

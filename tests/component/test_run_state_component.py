@@ -275,6 +275,25 @@ class RunStateHTTPComponentTests(unittest.TestCase):
         else:
             self.fail("numeric timestamp should return HTTP 400")
 
+        invalid_revision = {
+            "contract": "atg.run_event",
+            "version": "1.0",
+            **event.__dict__,
+            "event_id": "event-negative-revision",
+            "expected_revision": -1,
+        }
+        try:
+            self.request("POST", "/runs/run-http/events", invalid_revision)
+        except HTTPError as error:
+            self.assertEqual(error.code, 400)
+            self.assertEqual(
+                json.loads(error.read()),
+                {"error": "expected_revision must be a non-negative integer"},
+            )
+            error.close()
+        else:
+            self.fail("negative expected revision should return HTTP 400")
+
     def test_event_ingress_rejects_unknown_run_and_oversized_body(self):
         event = admit_event(run_id="missing-run")
         payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}

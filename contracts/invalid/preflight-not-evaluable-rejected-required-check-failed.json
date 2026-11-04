@@ -1,0 +1,12 @@
+{
+  "contract": "atg.preflight",
+  "version": "1.0",
+  "preflight_id": "preflight-invalid-002",
+  "run_id": "run-001",
+  "evaluated_at": "2026-11-03T17:00:30Z",
+  "checks": [
+    {"name": "model-capability", "category": "model", "required_check": true, "status": "not_run", "detail": "Model capability could not be evaluated."}
+  ],
+  "readiness": "not_evaluable",
+  "admission": "rejected"
+}

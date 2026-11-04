@@ -74,7 +74,13 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     if event_payload.get("run_id") != parts[1]:
                         self._respond(400, {"error": "event run_id does not match URL"})
                         return
-                    result = store.apply(RunEvent(**event_payload))
+                    try:
+                        event = RunEvent(**event_payload)
+                    except TypeError as exc:
+                        raise BadRequestError("invalid event payload") from exc
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    result = store.apply(event)
                     self._respond(200, {"duplicate": result.duplicate, "state": result.state.to_document()})
                     return
                 self._respond(404, {"error": "not found"})
@@ -84,8 +90,6 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 self._respond(400, {"error": str(exc)})
             except RequestTooLargeError as exc:
                 self._respond(413, {"error": str(exc)})
-            except TypeError:
-                self._respond(400, {"error": "invalid event payload"})
             except InvalidEventError as exc:
                 self._respond(400, {"error": str(exc)})
             except RunStateError as exc:
