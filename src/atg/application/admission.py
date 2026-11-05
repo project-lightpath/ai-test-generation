@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -47,6 +47,10 @@ class CheckResult:
     category: str = "self_verification"
     detail: str | None = None
     evidence_refs: tuple[str, ...] = ()
+    capability: str | None = None
+    checked_at: str | None = None
+    component: Mapping[str, object] | None = None
+    limitations: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in CHECK_STATUSES:
@@ -57,7 +61,15 @@ class CheckResult:
     def to_document(self) -> dict[str, object]:
         result = asdict(self)
         result["evidence_refs"] = list(self.evidence_refs)
+        result["limitations"] = list(self.limitations)
         return {key: value for key, value in result.items() if value is not None and value != []}
+
+    def with_metadata(self, checked_at: str, component: Mapping[str, object]) -> "CheckResult":
+        return replace(
+            self,
+            checked_at=self.checked_at or checked_at,
+            component=self.component or component,
+        )
 
 
 @dataclass(frozen=True)
@@ -136,12 +148,22 @@ class AdmissionService:
             return previous
 
         readiness = self._readiness.evaluate() if self._readiness is not None else None
+        degraded_requested = (
+            readiness is not None
+            and readiness.status == "degraded"
+            and bool(set(request.requested_capabilities) & set(readiness.degraded_capabilities))
+        )
         readiness_check = () if readiness is None else (CheckResult(
             name="platform-readiness",
             category="self_verification",
             required_check=True,
-            status="pass" if readiness.status in {"ready", "degraded"} else "fail",
-            detail=f"Platform readiness is {readiness.status}.",
+            status="fail" if readiness.status in {"blocked", "not_evaluable"} or degraded_requested else "pass",
+            detail=(
+                f"Requested degraded capabilities: {', '.join(sorted(set(request.requested_capabilities) & set(readiness.degraded_capabilities)))}"
+                if degraded_requested else f"Platform readiness is {readiness.status}."
+            ),
+            checked_at=readiness.evaluated_at,
+            component=readiness.service,
         ),)
         checks = readiness_check + tuple(check.evaluate(request) for check in self._checks)
         failed = tuple(check for check in checks if check.required_check and check.status in {"fail", "not_run"})
@@ -158,6 +180,12 @@ class AdmissionService:
             request_digest=digest,
             reason=reason,
             platform_readiness_id=getattr(readiness, "readiness_id", None),
+            failure_register_refs=tuple(sorted({
+                ref
+                for check in ((getattr(readiness, "checks", ()) if readiness is not None else ()) + checks)
+                if check.name == "failure-register"
+                for ref in check.evidence_refs
+            })),
             identities=_request_identities(request),
         )
         event = RunEvent(
@@ -186,9 +214,11 @@ def _request_identities(request: AdmissionRequest) -> Mapping[str, Mapping[str, 
         identities["source"] = source["identity"]
     repository = payload.get("repository")
     if isinstance(repository, Mapping):
-        identities["artifact"] = repository
-    for key in ("decision", "environment"):
-        value = payload.get(key)
-        if isinstance(value, Mapping):
-            identities[key] = value
+        identities["repository"] = repository
+    decision = payload.get("policy_decision")
+    if isinstance(decision, Mapping):
+        identities["decision"] = decision
+    environment = payload.get("environment")
+    if isinstance(environment, Mapping):
+        identities["environment"] = environment
     return identities

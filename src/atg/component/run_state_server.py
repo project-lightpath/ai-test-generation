@@ -10,10 +10,12 @@ from __future__ import annotations
 import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
 from atg.application.readiness import PlatformReadinessService
+from atg.adapters.failure_register import FailureRegisterCheck
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.domain.run_state import (
     InvalidEventError,
@@ -24,6 +26,11 @@ from atg.domain.run_state import (
 )
 
 MAX_REQUEST_BYTES = 1024 * 1024
+REQUEST_FIELDS = frozenset({
+    "contract", "version", "request_id", "run_id", "submitted_at", "source", "repository",
+    "policy_decision", "objective_ids", "requested_by", "mode", "constraints",
+    "requested_capabilities", "tenant_id", "authorization_ref", "environment",
+})
 
 
 class BadRequestError(ValueError):
@@ -48,6 +55,17 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 detail=f"Unsupported capabilities: {', '.join(missing)}" if missing else "Requested capabilities are supported.",
             )
 
+    class IdentityCheck:
+        def evaluate(self, request):
+            missing = [name for name in ("tenant_id", "authorization_ref") if not getattr(request, name)]
+            return CheckResult(
+                name="request-identity",
+                category="policy",
+                required_check=True,
+                status="fail" if missing else "pass",
+                detail=f"Missing identities: {', '.join(missing)}" if missing else "Tenant and authorization identities are present.",
+            )
+
     class ContractCheck:
         def evaluate(self, request):
             return CheckResult(
@@ -55,8 +73,11 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 status="pass", detail="ATG v1 contracts are loaded.",
             )
 
-    readiness_service = PlatformReadinessService((ContractCheck(),))
-    admission_service = AdmissionService(store, (CapabilityCheck(),), readiness=readiness_service)
+    failure_register = FailureRegisterCheck(
+        Path(__file__).parents[3] / "contracts" / "failure-register" / "v1" / "cases.json"
+    )
+    readiness_service = PlatformReadinessService((ContractCheck(), failure_register))
+    admission_service = AdmissionService(store, (CapabilityCheck(), IdentityCheck()), readiness=readiness_service)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
@@ -101,14 +122,24 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                         raise BadRequestError("admission body must be a JSON object")
                     if body.get("contract") != "atg.request" or body.get("version") != "1.0":
                         raise BadRequestError("admission requires atg.request version 1.0")
-                    required = ("request_id", "run_id", "submitted_at", "idempotency_key", "requested_by")
+                    unknown = sorted(set(body) - REQUEST_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported request fields: {', '.join(unknown)}")
+                    idempotency_key = self.headers.get("Idempotency-Key")
+                    if not idempotency_key:
+                        raise BadRequestError("admission requires Idempotency-Key header")
+                    required = ("request_id", "run_id", "submitted_at", "requested_by", "tenant_id", "authorization_ref")
                     if any(not isinstance(body.get(field), str) or not body[field] for field in required):
-                        raise BadRequestError("admission requires request_id, run_id, submitted_at, and idempotency_key")
-                    for field in ("request_id", "run_id", "idempotency_key"):
+                        raise BadRequestError("admission requires request, requester, tenant, and authorization identities")
+                    for field in ("request_id", "run_id", "requested_by", "tenant_id", "authorization_ref"):
                         try:
                             validate_identifier(body[field], field)
                         except ValueError as exc:
                             raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_identifier(idempotency_key, "Idempotency-Key")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
                     try:
                         validate_timestamp(body["submitted_at"], "submitted_at")
                     except ValueError as exc:
@@ -118,13 +149,25 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                         raise BadRequestError("requested_capabilities must be a list of strings")
                     if not isinstance(body["source"], dict) or not isinstance(body["repository"], dict):
                         raise BadRequestError("source and repository must be objects")
+                    _validate_identity(body["source"].get("identity"), "source.identity")
+                    if not isinstance(body["source"].get("locator"), str) or not body["source"]["locator"]:
+                        raise BadRequestError("source.locator must be a non-empty string")
+                    _validate_identity(body["repository"], "repository")
+                    for field in ("policy_decision", "environment"):
+                        if field in body:
+                            _validate_identity(body[field], field)
                     if not isinstance(body["objective_ids"], list) or not body["objective_ids"] or not all(isinstance(value, str) for value in body["objective_ids"]):
                         raise BadRequestError("objective_ids must be a non-empty list of strings")
+                    for objective_id in body["objective_ids"]:
+                        try:
+                            validate_identifier(objective_id, "objective_id")
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
                     request = AdmissionRequest(
                         request_id=body["request_id"],
                         run_id=body["run_id"],
                         submitted_at=body["submitted_at"],
-                        idempotency_key=body["idempotency_key"],
+                        idempotency_key=idempotency_key,
                         requested_capabilities=tuple(requested),
                         tenant_id=body.get("tenant_id"),
                         authorization_ref=body.get("authorization_ref"),
@@ -211,6 +254,17 @@ def _event_document(event: RunEvent) -> dict:
     }
     document.update({key: value for key, value in event.__dict__.items() if value is not None})
     return document
+
+
+def _validate_identity(value, field_name: str) -> None:
+    if not isinstance(value, dict):
+        raise BadRequestError(f"{field_name} must be an identity object")
+    if not isinstance(value.get("kind"), str) or not value["kind"]:
+        raise BadRequestError(f"{field_name}.kind must be a non-empty string")
+    try:
+        validate_identifier(value.get("id"), f"{field_name}.id")
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
 
 
 def main() -> None:

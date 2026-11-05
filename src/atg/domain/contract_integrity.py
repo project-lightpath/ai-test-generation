@@ -84,6 +84,15 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 errors,
                 "feedback.checkpoint_id",
             )
+        if contract == "atg.run_terminal":
+            _require_related(
+                document, "atg.request", document.get("request_id"), require, errors,
+                "run_terminal.request_id",
+            )
+            _require_related(
+                document, "atg.run_admission", document.get("admission_id"), require, errors,
+                "run_terminal.admission_id",
+            )
         if contract == "atg.feedback":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "feedback.evidence_refs")
         if contract == "atg.generation":

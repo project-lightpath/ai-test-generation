@@ -57,8 +57,22 @@ class SQLiteRunStateStore:
             CREATE TABLE IF NOT EXISTS admissions (
                 idempotency_key TEXT PRIMARY KEY,
                 request_digest TEXT NOT NULL,
-                result_json TEXT NOT NULL
+                result_json TEXT NOT NULL,
+                terminal_json TEXT
             );
+            """
+        )
+        admission_columns = {
+            row["name"] for row in self._connection.execute("PRAGMA table_info(admissions)")
+        }
+        if "terminal_json" not in admission_columns:
+            self._connection.execute("ALTER TABLE admissions ADD COLUMN terminal_json TEXT")
+        self._connection.executescript(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS admissions_by_request
+                ON admissions(json_extract(result_json, '$.request_id'));
+            CREATE UNIQUE INDEX IF NOT EXISTS admissions_by_run
+                ON admissions(json_extract(result_json, '$.run_id'));
             """
         )
 
@@ -85,9 +99,22 @@ class SQLiteRunStateStore:
                     raise ValueError("idempotency key is bound to a different request")
                 return
             self._connection.execute(
-                "INSERT INTO admissions(idempotency_key, request_digest, result_json) VALUES (?, ?, ?)",
-                (key, request_digest, json.dumps(result.to_document(), sort_keys=True)),
+                "INSERT INTO admissions(idempotency_key, request_digest, result_json, terminal_json) VALUES (?, ?, ?, ?)",
+                (
+                    key,
+                    request_digest,
+                    json.dumps(result.to_document(), sort_keys=True),
+                    json.dumps(result.terminal_document(), sort_keys=True) if result.terminal_document() else None,
+                ),
             )
+
+    def get_terminal(self, run_id: str) -> dict | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT terminal_json FROM admissions WHERE json_extract(result_json, '$.run_id') = ?",
+                (run_id,),
+            ).fetchone()
+        return json.loads(row["terminal_json"]) if row is not None and row["terminal_json"] else None
 
     def record_admission(self, key: str, request_digest: str, result: AdmissionResult, event: RunEvent) -> AdmissionResult:
         """Atomically persist the admission result and its run transition."""
@@ -105,14 +132,31 @@ class SQLiteRunStateStore:
                     ).fetchone()
                     self._connection.execute("COMMIT")
                     return _admission_from_document(json.loads(stored["result_json"]))
+                existing_identity = self._connection.execute(
+                    "SELECT request_digest, result_json FROM admissions "
+                    "WHERE json_extract(result_json, '$.request_id') = ? "
+                    "OR json_extract(result_json, '$.run_id') = ?",
+                    (result.request_id, result.run_id),
+                ).fetchone()
+                if existing_identity is not None:
+                    if existing_identity["request_digest"] != request_digest:
+                        raise AdmissionConflictError("request or run identity is bound to a different admission")
+                    stored_result = _admission_from_document(json.loads(existing_identity["result_json"]))
+                    self._connection.execute("COMMIT")
+                    return stored_result
                 self._connection.execute(
                     "INSERT OR IGNORE INTO runs(run_id, revision, state_json) VALUES (?, ?, ?)",
                     (event.run_id, 0, json.dumps(RunState(run_id=event.run_id, updated_at=event.occurred_at).to_document(), sort_keys=True)),
                 )
                 self._apply_locked(event)
                 self._connection.execute(
-                    "INSERT INTO admissions(idempotency_key, request_digest, result_json) VALUES (?, ?, ?)",
-                    (key, request_digest, json.dumps(result.to_document(), sort_keys=True)),
+                    "INSERT INTO admissions(idempotency_key, request_digest, result_json, terminal_json) VALUES (?, ?, ?, ?)",
+                    (
+                        key,
+                        request_digest,
+                        json.dumps(result.to_document(), sort_keys=True),
+                        json.dumps(result.terminal_document(), sort_keys=True) if result.terminal_document() else None,
+                    ),
                 )
                 self._connection.execute("COMMIT")
                 return result
@@ -245,6 +289,10 @@ def _admission_from_document(document: dict) -> AdmissionResult:
             category=check.get("category", "self_verification"),
             detail=check.get("detail"),
             evidence_refs=tuple(check.get("evidence_refs", [])),
+            capability=check.get("capability"),
+            checked_at=check.get("checked_at"),
+            component=check.get("component"),
+            limitations=tuple(check.get("limitations", [])),
         ) for check in document["checks"]),
         status=document["status"],
         request_digest=document["request_digest"],

@@ -23,5 +23,5 @@ class FailureRegisterCheck:
             required_check=True,
             status="fail" if failures else "pass",
             detail=f"Failure cases: {', '.join(failures)}" if failures else self.register_id,
-            evidence_refs=tuple(failures),
+            evidence_refs=(self.register_id, *failures),
         )

@@ -17,6 +17,9 @@ class AdmissionStore(Protocol):
     def get_admission(self, idempotency_key: str) -> AdmissionResult | None:
         """Return the prior result for an idempotency key."""
 
+    def get_terminal(self, run_id: str) -> dict | None:
+        """Return the durable terminal admission record for a run."""
+
     def save_admission(self, key: str, request_digest: str, result: AdmissionResult) -> None:
         """Persist an admission result."""
 

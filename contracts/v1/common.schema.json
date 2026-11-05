@@ -34,6 +34,7 @@
       "additionalProperties": false,
       "properties": {
         "source": { "$ref": "#/$defs/identity" },
+        "repository": { "$ref": "#/$defs/identity" },
         "artifact": { "$ref": "#/$defs/identity" },
         "contract": { "$ref": "#/$defs/identity" },
         "decision": { "$ref": "#/$defs/identity" },
@@ -83,7 +84,11 @@
         "required_check": { "type": "boolean" },
         "status": { "enum": ["pass", "fail", "warn", "not_run"] },
         "detail": { "type": "string" },
-        "evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+        "evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "capability": { "$ref": "#/$defs/id" },
+        "checked_at": { "$ref": "#/$defs/timestamp" },
+        "component": { "$ref": "#/$defs/identity" },
+        "limitations": { "type": "array", "items": { "$ref": "#/$defs/limitation" } }
       }
     },
     "preflight_status": { "enum": ["ready", "degraded", "blocked", "not_evaluable"] },

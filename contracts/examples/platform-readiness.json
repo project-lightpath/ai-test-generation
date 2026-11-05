@@ -4,8 +4,8 @@
   "readiness_id": "readiness-001",
   "evaluated_at": "2026-11-04T18:00:00Z",
   "checks": [
-    {"name": "contract-registry", "category": "self_verification", "required_check": true, "status": "pass", "detail": "Supported contracts are loaded."},
-    {"name": "execution-provider", "category": "execution", "required_check": false, "status": "warn", "detail": "No live provider configured for local development."}
+    {"name": "contract-registry", "category": "self_verification", "required_check": true, "status": "pass", "detail": "Supported contracts are loaded.", "checked_at": "2026-11-04T18:00:00Z", "component": {"kind": "atg-service", "id": "atg-local", "version": "dev"}, "limitations": []},
+    {"name": "execution-provider", "category": "execution", "required_check": false, "status": "warn", "capability": "tekton", "detail": "No live provider configured for local development.", "checked_at": "2026-11-04T18:00:00Z", "component": {"kind": "atg-service", "id": "atg-local", "version": "dev"}, "limitations": [{"code": "local-only", "description": "No live execution provider is configured.", "severity": "warning"}]}
   ],
   "status": "degraded",
   "service": {"kind": "atg-service", "id": "atg-local", "version": "dev"},

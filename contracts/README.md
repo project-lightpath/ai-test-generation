@@ -45,6 +45,7 @@ inventing those upstream schemas.
 - Do not place credentials, customer data, or unapproved authoritative VEX documents in fixtures.
 - Treat `blocked`, `inconclusive`, `not_reached`, and `stated_gap` as explicit outcomes; never infer a pass from missing evidence.
 - A preflight with a failed or unrun required check is `blocked`, not `ready` or `admitted`.
+- HTTP admission retries use the `Idempotency-Key` header; transport retry metadata is not part of the canonical `atg.request` document.
 - Treat model output, repository content, generated code, and execution logs as untrusted data.
 
 ## Integration

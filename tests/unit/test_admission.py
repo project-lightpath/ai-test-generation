@@ -75,7 +75,7 @@ class AdmissionTests(unittest.TestCase):
         check = FailureRegisterCheck(fixture, failed_case_ids=("FR-ADMISSION-001",))
         result = check.evaluate(None)
         self.assertEqual(result.status, "fail")
-        self.assertEqual(result.evidence_refs, ("FR-ADMISSION-001",))
+        self.assertEqual(result.evidence_refs, ("atg.failure_register:1.0", "FR-ADMISSION-001"))
 
     def test_optional_failure_does_not_block_admission(self):
         with TemporaryDirectory() as directory:
@@ -93,6 +93,9 @@ class AdmissionTests(unittest.TestCase):
             duplicate = service.admit(request())
             self.assertEqual(first, duplicate)
             self.assertEqual(store.get_run("run-1").revision, 1)
+            alternate_key = service.admit(request(key="key-2"))
+            self.assertEqual(first, alternate_key)
+            self.assertIsNone(store.get_admission("key-2"))
 
             with self.assertRaises(AdmissionConflictError):
                 service.admit(request(key="key-1", run_id="other-run"))
@@ -109,6 +112,7 @@ class AdmissionTests(unittest.TestCase):
             restarted = SQLiteRunStateStore(database)
             self.assertEqual(restarted.get_admission("key-1"), result)
             self.assertEqual(restarted.replay("run-1").status, "blocked")
+            self.assertEqual(restarted.get_terminal("run-1")["status"], "blocked")
             restarted.close()
 
     def test_two_store_instances_return_one_durable_admission(self):

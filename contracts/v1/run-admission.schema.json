@@ -4,7 +4,7 @@
   "title": "ATG run admission result",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "admission_id", "request_id", "run_id", "evaluated_at", "checks", "status", "request_digest"],
+  "required": ["contract", "version", "admission_id", "request_id", "run_id", "evaluated_at", "checks", "status", "request_digest", "identities"],
   "properties": {
     "contract": { "const": "atg.run_admission" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
