@@ -8,12 +8,14 @@
   "status": "blocked",
   "reason": "execution provider unavailable",
   "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "checks": [],
-  "failure_register_refs": ["FR-EXEC-001"],
+  "checks": [
+    {"name": "request-contract", "category": "self_verification", "required_check": true, "status": "fail", "detail": "execution provider unavailable"}
+  ],
+  "failure_register_refs": ["FR-ADMISSION-001"],
   "identities": {
-    "source": {"kind": "vpe", "id": "vpe-1", "digest": "sha256:01234567"},
+    "source": {"kind": "vpe-request", "id": "vpe-001", "version": "1"},
     "contract": {"kind": "atg.request", "id": "request-contract", "version": "1.0"},
-    "environment": {"kind": "atg-platform", "id": "dev", "version": "1"}
+    "environment": {"kind": "atg-platform", "id": "development", "version": "1"}
   },
   "limitations": []
 }

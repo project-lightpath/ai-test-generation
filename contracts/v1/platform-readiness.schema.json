@@ -25,8 +25,14 @@
     "failure_register_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
     "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
   },
-  "allOf": [{
-    "if": { "properties": { "status": { "enum": ["ready", "degraded"] } } },
-    "then": { "properties": { "checks": { "not": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } } }
-  }]
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "ready" } } },
+      "then": { "properties": { "checks": { "items": { "properties": { "status": { "const": "pass" } } } } } }
+    },
+    {
+      "if": { "properties": { "status": { "const": "degraded" } } },
+      "then": { "properties": { "checks": { "not": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } } }
+    }
+  ]
 }

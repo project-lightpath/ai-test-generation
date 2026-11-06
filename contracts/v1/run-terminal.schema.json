@@ -19,5 +19,9 @@
     "failure_register_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } },
     "identities": { "$ref": "common.schema.json#/$defs/identity_bundle" },
     "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
-  }
+  },
+  "allOf": [{
+    "if": { "properties": { "status": { "const": "blocked" } } },
+    "then": { "properties": { "checks": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } }
+  }]
 }

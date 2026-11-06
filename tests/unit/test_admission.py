@@ -1,6 +1,7 @@
 import pathlib
 import sys
 import unittest
+import json
 from concurrent.futures import ThreadPoolExecutor
 from tempfile import TemporaryDirectory
 
@@ -11,6 +12,19 @@ from atg.application.admission import AdmissionConflictError, AdmissionRequest, 
 from atg.domain.run_state import InvalidTransitionError  # noqa: E402
 from atg.ports.evidence import EvidencePublicationBlockedError, GuardedEvidencePublisher  # noqa: E402
 from atg.adapters.failure_register import FailureRegisterCheck  # noqa: E402
+from jsonschema import Draft202012Validator, FormatChecker, RefResolver  # noqa: E402
+
+
+CONTRACT_ROOT = pathlib.Path(__file__).parents[2] / "contracts" / "v1"
+
+
+def validate_document(document, schema_name):
+    """Validate a generated document against a repository contract schema."""
+    schemas = {path.name: json.loads(path.read_text()) for path in CONTRACT_ROOT.glob("*.schema.json")}
+    schema = schemas[f"{schema_name}.schema.json"]
+    store = {**schemas, schemas["common.schema.json"]["$id"]: schemas["common.schema.json"]}
+    resolver = RefResolver.from_schema(schema, store=store)
+    Draft202012Validator(schema, resolver=resolver, format_checker=FormatChecker()).validate(document)
 
 
 class FixedCheck:
@@ -64,6 +78,10 @@ class AdmissionTests(unittest.TestCase):
             store = SQLiteRunStateStore(pathlib.Path(directory) / "state.sqlite3")
             result = AdmissionService(store, (FixedCheck("fail", detail="blocked"),)).admit(request())
             self.assertEqual(result.terminal_document()["contract"], "atg.run_terminal")
+            terminal = store.get_terminal("run-1")
+            self.assertEqual(terminal, result.terminal_document())
+            self.assertEqual(terminal["reason"], "blocked")
+            validate_document(terminal, "run-terminal")
             publisher = GuardedEvidencePublisher(store)
             with self.assertRaises(EvidencePublicationBlockedError):
                 publisher.publish("run-1", {"kind": "execution"})
@@ -76,6 +94,9 @@ class AdmissionTests(unittest.TestCase):
         result = check.evaluate(None)
         self.assertEqual(result.status, "fail")
         self.assertEqual(result.evidence_refs, ("atg.failure_register:1.0", "FR-ADMISSION-001"))
+
+        with self.assertRaises(ValueError):
+            FailureRegisterCheck(fixture, failed_case_ids=("FR-UNKNOWN-001",))
 
     def test_optional_failure_does_not_block_admission(self):
         with TemporaryDirectory() as directory:

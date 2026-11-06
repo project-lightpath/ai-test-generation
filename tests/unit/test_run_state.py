@@ -268,6 +268,12 @@ class RunStateTests(unittest.TestCase):
         state = state.apply(event("run-1", "e5", 4, "analysis_started")).state
         self.assertEqual(state.status, "analyzing")
 
+    def test_admission_blocked_run_cannot_be_retried(self):
+        state = RunState.initial("run-1")
+        state = state.apply(event("run-1", "e1", 0, "admission_blocked", reason="missing provider")).state
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e2", 1, "retry_requested", reason="retry admission"))
+
     def test_rejected_decision_becomes_terminal_blocked_outcome(self):
         state = RunState.initial("run-1")
         state = state.apply(event("run-1", "e1", 0, "admit")).state

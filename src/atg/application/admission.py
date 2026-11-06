@@ -26,6 +26,7 @@ class AdmissionRequest:
     payload: Mapping[str, object] = field(default_factory=dict)
 
     def digest(self) -> str:
+        """Return the stable digest of request content excluding transport metadata."""
         document = {
             "request_id": self.request_id,
             "run_id": self.run_id,
@@ -53,18 +54,21 @@ class CheckResult:
     limitations: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
+        """Reject unsupported check statuses and categories."""
         if self.status not in CHECK_STATUSES:
             raise ValueError(f"unsupported check status: {self.status}")
         if self.category not in CHECK_CATEGORIES:
             raise ValueError(f"unsupported check category: {self.category}")
 
     def to_document(self) -> dict[str, object]:
+        """Serialize the check using the public contract shape."""
         result = asdict(self)
         result["evidence_refs"] = list(self.evidence_refs)
         result["limitations"] = list(self.limitations)
         return {key: value for key, value in result.items() if value is not None and value != []}
 
     def with_metadata(self, checked_at: str, component: Mapping[str, object]) -> "CheckResult":
+        """Return this check with missing observation metadata populated."""
         return replace(
             self,
             checked_at=self.checked_at or checked_at,
@@ -88,6 +92,7 @@ class AdmissionResult:
     identities: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     def to_document(self) -> dict[str, object]:
+        """Serialize the admission result using the public contract shape."""
         document = {
             "contract": "atg.run_admission",
             "version": "1.0",
@@ -110,6 +115,7 @@ class AdmissionResult:
         return document
 
     def terminal_document(self) -> dict[str, object] | None:
+        """Return a terminal record for blocked or rejected admission."""
         if self.status not in {"blocked", "rejected"}:
             return None
         return {
@@ -135,11 +141,13 @@ class AdmissionConflictError(ValueError):
 
 class AdmissionService:
     def __init__(self, store, checks: Iterable[object], readiness=None) -> None:
+        """Create an admission service with persistence and check adapters."""
         self._store = store
         self._checks = tuple(checks)
         self._readiness = readiness
 
     def admit(self, request: AdmissionRequest) -> AdmissionResult:
+        """Evaluate and durably record one idempotent admission attempt."""
         digest = request.digest()
         previous = self._store.get_admission(request.idempotency_key)
         if previous is not None:
@@ -165,7 +173,7 @@ class AdmissionService:
             checked_at=readiness.evaluated_at,
             component=readiness.service,
         ),)
-        checks = readiness_check + tuple(check.evaluate(request) for check in self._checks)
+        checks = readiness_check + tuple(evaluate_check(check, request) for check in self._checks)
         failed = tuple(check for check in checks if check.required_check and check.status in {"fail", "not_run"})
         status = "blocked" if failed else "admitted"
         reason = "; ".join(check.detail or check.name for check in failed) if failed else None
@@ -205,6 +213,7 @@ class AdmissionService:
 
 
 def _request_identities(request: AdmissionRequest) -> Mapping[str, Mapping[str, object]]:
+    """Build the identity bundle preserved in admission documents."""
     payload = request.payload
     identities: dict[str, Mapping[str, object]] = {
         "contract": {"kind": "atg.request", "id": "request-contract", "version": "1.0"},
@@ -221,4 +230,24 @@ def _request_identities(request: AdmissionRequest) -> Mapping[str, Mapping[str, 
     environment = payload.get("environment")
     if isinstance(environment, Mapping):
         identities["environment"] = environment
+    if request.tenant_id is not None:
+        identities["tenant"] = {"kind": "tenant", "id": request.tenant_id}
+    if request.authorization_ref is not None:
+        identities["authorization"] = {"kind": "authorization", "id": request.authorization_ref}
     return identities
+
+
+def evaluate_check(check, request) -> CheckResult:
+    """Evaluate a check and convert adapter exceptions into check results."""
+    try:
+        return check.evaluate(request)
+    except Exception as exc:  # boundary adapters are untrusted
+        required = bool(getattr(check, "required", getattr(check, "required_check", True)))
+        return CheckResult(
+            name=getattr(check, "name", check.__class__.__name__),
+            required_check=required,
+            status="fail" if required else "not_run",
+            category=getattr(check, "category", "self_verification"),
+            capability=getattr(check, "capability", None),
+            detail=f"check evaluation failed: {exc}",
+        )

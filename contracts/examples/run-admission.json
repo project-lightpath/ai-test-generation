@@ -6,10 +6,10 @@
   "run_id": "run-001",
   "evaluated_at": "2026-11-04T18:00:01Z",
   "checks": [
-    {"name": "request-contract", "category": "self_verification", "required_check": true, "status": "pass"},
-    {"name": "requested-capabilities", "category": "policy", "required_check": true, "status": "pass"}
+    {"name": "request-contract", "category": "self_verification", "required_check": true, "status": "fail", "detail": "execution provider unavailable"}
   ],
-  "status": "admitted",
+  "status": "blocked",
+  "reason": "execution provider unavailable",
   "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "platform_readiness_id": "readiness-001",
   "identities": {

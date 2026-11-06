@@ -21,6 +21,7 @@
       "type": "object",
       "additionalProperties": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" }
     },
+    "admission_blocked": { "type": "boolean" },
     "terminal_reason": { "type": "string" }
   }
 }

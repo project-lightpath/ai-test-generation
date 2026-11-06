@@ -31,6 +31,7 @@ class SQLiteRunStateStore:
     """Transactional snapshot plus append-only event journal."""
 
     def __init__(self, database: str | Path = ":memory:") -> None:
+        """Open or create the SQLite snapshot, journal, and admission tables."""
         self._lock = RLock()
         self._connection = sqlite3.connect(
             str(database), isolation_level=None, check_same_thread=False
@@ -77,10 +78,12 @@ class SQLiteRunStateStore:
         )
 
     def close(self) -> None:
+        """Close the SQLite connection."""
         with self._lock:
             self._connection.close()
 
     def get_admission(self, idempotency_key: str) -> AdmissionResult | None:
+        """Load an admission result by transport idempotency key."""
         with self._lock:
             row = self._connection.execute(
                 "SELECT result_json FROM admissions WHERE idempotency_key = ?", (idempotency_key,)
@@ -90,6 +93,7 @@ class SQLiteRunStateStore:
         return _admission_from_document(json.loads(row["result_json"]))
 
     def save_admission(self, key: str, request_digest: str, result: AdmissionResult) -> None:
+        """Persist an admission result when using the legacy split path."""
         with self._lock:
             existing = self._connection.execute(
                 "SELECT request_digest FROM admissions WHERE idempotency_key = ?", (key,)
@@ -109,6 +113,7 @@ class SQLiteRunStateStore:
             )
 
     def get_terminal(self, run_id: str) -> dict | None:
+        """Load the durable terminal record associated with a run."""
         with self._lock:
             row = self._connection.execute(
                 "SELECT terminal_json FROM admissions WHERE json_extract(result_json, '$.run_id') = ?",
@@ -117,7 +122,7 @@ class SQLiteRunStateStore:
         return json.loads(row["terminal_json"]) if row is not None and row["terminal_json"] else None
 
     def record_admission(self, key: str, request_digest: str, result: AdmissionResult, event: RunEvent) -> AdmissionResult:
-        """Atomically persist the admission result and its run transition."""
+        """Atomically persist admission, terminal record, and run transition."""
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -165,6 +170,7 @@ class SQLiteRunStateStore:
                 raise
 
     def create_run(self, run_id: str, created_at: str) -> RunState:
+        """Create or retrieve a run snapshot."""
         with self._lock:
             validate_identifier(run_id, "run_id")
             validate_timestamp(created_at, "created_at")
@@ -177,6 +183,7 @@ class SQLiteRunStateStore:
             return self.get_run(run_id)
 
     def get_run(self, run_id: str) -> RunState:
+        """Load a run snapshot by ID."""
         with self._lock:
             row = self._connection.execute(
                 "SELECT state_json FROM runs WHERE run_id = ?", (run_id,)
@@ -186,6 +193,7 @@ class SQLiteRunStateStore:
             return RunState.from_document(json.loads(row["state_json"]))
 
     def apply(self, event: RunEvent) -> TransitionResult:
+        """Apply one event in an immediate SQLite transaction."""
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -233,6 +241,7 @@ class SQLiteRunStateStore:
         return result
 
     def events(self, run_id: str) -> Iterator[RunEvent]:
+        """Yield the append-only event journal for a run."""
         with self._lock:
             exists = self._connection.execute(
                 "SELECT 1 FROM runs WHERE run_id = ?", (run_id,)
@@ -247,6 +256,7 @@ class SQLiteRunStateStore:
             yield RunEvent(**json.loads(row["payload_json"]))
 
     def replay(self, run_id: str) -> RunState:
+        """Replay and verify the event journal against the stored snapshot."""
         with self._lock:
             self._connection.execute("BEGIN")
             try:

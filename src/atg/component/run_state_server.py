@@ -42,10 +42,12 @@ class RequestTooLargeError(ValueError):
 
 
 def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int = 0, capabilities=()):
+    """Create the local HTTP development component."""
     store = SQLiteRunStateStore(database)
 
     class CapabilityCheck:
         def evaluate(self, request):
+            """Check that every requested capability is locally available."""
             missing = sorted(set(request.requested_capabilities) - set(capabilities))
             return CheckResult(
                 name="requested-capabilities",
@@ -57,6 +59,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
 
     class IdentityCheck:
         def evaluate(self, request):
+            """Check that tenant and authorization identities are present."""
             missing = [name for name in ("tenant_id", "authorization_ref") if not getattr(request, name)]
             return CheckResult(
                 name="request-identity",
@@ -67,7 +70,23 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
             )
 
     class ContractCheck:
+        name = "contract-registry"
+        required = True
+
         def evaluate(self, request):
+            """Verify that the versioned contract files are present and parseable."""
+            contracts = Path(__file__).parents[3] / "contracts" / "v1"
+            try:
+                paths = tuple(contracts.glob("*.schema.json"))
+                if not paths:
+                    raise ValueError("no contract schemas found")
+                for path in paths:
+                    json.loads(path.read_text())
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                return CheckResult(
+                    name=self.name, category="self_verification", required_check=True,
+                    status="not_run", detail=f"contract verification unavailable: {exc}",
+                )
             return CheckResult(
                 name="contract-registry", category="self_verification", required_check=True,
                 status="pass", detail="ATG v1 contracts are loaded.",
@@ -81,9 +100,11 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
+            """Suppress access logging in the development component."""
             return
 
         def do_GET(self):  # noqa: N802
+            """Serve readiness, run state, and event journal documents."""
             parts = self._parts()
             try:
                 if len(parts) == 2 and parts[0] == "runs":
@@ -98,6 +119,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 self._respond(404, {"error": "run not found"})
 
         def do_POST(self):  # noqa: N802
+            """Accept run, event, and admission requests."""
             parts = self._parts()
             try:
                 body = self._body()
@@ -147,16 +169,16 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     requested = body.get("requested_capabilities", [])
                     if not isinstance(requested, list) or not all(isinstance(value, str) for value in requested):
                         raise BadRequestError("requested_capabilities must be a list of strings")
-                    if not isinstance(body["source"], dict) or not isinstance(body["repository"], dict):
+                    if not isinstance(body.get("source"), dict) or not isinstance(body.get("repository"), dict):
                         raise BadRequestError("source and repository must be objects")
-                    _validate_identity(body["source"].get("identity"), "source.identity")
-                    if not isinstance(body["source"].get("locator"), str) or not body["source"]["locator"]:
+                    _validate_identity(body.get("source", {}).get("identity"), "source.identity")
+                    if not isinstance(body.get("source", {}).get("locator"), str) or not body["source"]["locator"]:
                         raise BadRequestError("source.locator must be a non-empty string")
                     _validate_identity(body["repository"], "repository")
                     for field in ("policy_decision", "environment"):
                         if field in body:
                             _validate_identity(body[field], field)
-                    if not isinstance(body["objective_ids"], list) or not body["objective_ids"] or not all(isinstance(value, str) for value in body["objective_ids"]):
+                    if not isinstance(body.get("objective_ids"), list) or not body["objective_ids"] or not all(isinstance(value, str) for value in body["objective_ids"]):
                         raise BadRequestError("objective_ids must be a non-empty list of strings")
                     for objective_id in body["objective_ids"]:
                         try:
@@ -214,9 +236,11 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 self._respond(409, {"error": str(exc)})
 
         def _parts(self):
+            """Return decoded non-empty URL path components."""
             return [unquote(part) for part in urlsplit(self.path).path.strip("/").split("/") if part]
 
         def _body(self):
+            """Read and decode a bounded JSON request body."""
             raw_length = self.headers.get("Content-Length")
             try:
                 length = int(raw_length) if raw_length is not None else 0
@@ -233,6 +257,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
             return body
 
         def _respond(self, status, payload):
+            """Write a JSON response with an explicit content length."""
             encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -248,6 +273,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
 
 
 def _event_document(event: RunEvent) -> dict:
+    """Serialize a run event with its public contract envelope."""
     document = {
         "contract": "atg.run_event",
         "version": "1.0",
@@ -257,6 +283,7 @@ def _event_document(event: RunEvent) -> dict:
 
 
 def _validate_identity(value, field_name: str) -> None:
+    """Validate the required shape of an identity object."""
     if not isinstance(value, dict):
         raise BadRequestError(f"{field_name} must be an identity object")
     if not isinstance(value.get("kind"), str) or not value["kind"]:
@@ -268,6 +295,7 @@ def _validate_identity(value, field_name: str) -> None:
 
 
 def main() -> None:
+    """Run the local HTTP development component from the command line."""
     parser = argparse.ArgumentParser(description="Run the local ATG run-state development component")
     parser.add_argument("--database", default="atg-run-state.sqlite3")
     parser.add_argument("--host", default="127.0.0.1")

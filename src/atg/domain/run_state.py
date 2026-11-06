@@ -77,6 +77,7 @@ class RunEvent:
     expires_at: str | None = None
 
     def __post_init__(self) -> None:
+        """Validate event identity, payload, and event-specific requirements."""
         validate_identifier(self.event_id, "event_id")
         validate_identifier(self.run_id, "run_id")
         if not isinstance(self.event_type, str) or not self.event_type:
@@ -134,6 +135,7 @@ class RunState:
     processed_event_ids: tuple[str, ...] = ()
     event_fingerprints: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
     terminal_reason: str | None = None
+    admission_blocked: bool = False
 
     _TERMINAL = frozenset({"completed", "blocked", "inconclusive", "stated_gap", "cancelled"})
     _CHECKPOINT_STATUSES = {
@@ -181,6 +183,7 @@ class RunState:
 
     @classmethod
     def initial(cls, run_id: str) -> "RunState":
+        """Create a new requested run projection."""
         validate_identifier(run_id, "run_id")
         return cls(run_id=run_id)
 
@@ -203,7 +206,7 @@ class RunState:
             )
         if self.updated_at and _parse_timestamp(event.occurred_at) < _parse_timestamp(self.updated_at):
             raise InvalidTransitionError("event occurred_at cannot precede the current updated_at")
-        retrying = event.event_type == "retry_requested" and self.status in {"blocked", "inconclusive"}
+        retrying = event.event_type == "retry_requested" and self.status in {"blocked", "inconclusive"} and not self.admission_blocked
         if self.status in self._TERMINAL and not retrying:
             raise InvalidTransitionError(f"run is terminal: {self.status}")
 
@@ -255,9 +258,17 @@ class RunState:
 
         fingerprints = dict(self.event_fingerprints)
         fingerprints[event.event_id] = fingerprint
-        return TransitionResult(replace(next_state, event_fingerprints=fingerprints), duplicate=False)
+        return TransitionResult(
+            replace(
+                next_state,
+                event_fingerprints=fingerprints,
+                admission_blocked=self.admission_blocked or event.event_type == "admission_blocked",
+            ),
+            duplicate=False,
+        )
 
     def _create_checkpoint(self, event: RunEvent) -> "RunState":
+        """Create or supersede a lifecycle checkpoint."""
         if not event.checkpoint_id or event.checkpoint_kind not in self._CHECKPOINT_STATUSES:
             raise InvalidTransitionError("checkpoint creation requires id and supported kind")
         if event.checkpoint_id == self.active_checkpoint_id:
@@ -293,6 +304,7 @@ class RunState:
         )
 
     def _expire_checkpoint(self, event: RunEvent) -> "RunState":
+        """Expire the active checkpoint and return to its prior stage."""
         if self.active_checkpoint_id is None or event.checkpoint_id != self.active_checkpoint_id:
             raise SupersessionError("expiration does not target the active checkpoint")
         if self.active_checkpoint_expires_at and _parse_timestamp(event.occurred_at) < _parse_timestamp(
@@ -319,6 +331,7 @@ class RunState:
         )
 
     def _record_decision(self, event: RunEvent) -> "RunState":
+        """Apply an authorized decision to the active checkpoint."""
         if self.active_checkpoint_id is None or event.checkpoint_id != self.active_checkpoint_id:
             raise SupersessionError("decision does not target the active checkpoint")
         if event.decision not in {"approved", "rejected", "blocked", "stated_gap"}:
@@ -364,6 +377,7 @@ class RunState:
             "superseded_checkpoint_ids": list(self.superseded_checkpoint_ids),
             "processed_event_ids": list(self.processed_event_ids),
             "event_fingerprints": dict(self.event_fingerprints),
+            "admission_blocked": self.admission_blocked,
         }
         optional = {
             "active_checkpoint_id": self.active_checkpoint_id,
@@ -391,6 +405,9 @@ class RunState:
             raise ValueError("status is invalid")
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
             raise ValueError("revision must be a non-negative integer")
+        admission_blocked = document.get("admission_blocked", False)
+        if not isinstance(admission_blocked, bool):
+            raise ValueError("admission_blocked must be a boolean")
         if not isinstance(updated_at, str):
             raise ValueError("updated_at must be a timestamp string")
         _parse_timestamp(updated_at)
@@ -429,6 +446,7 @@ class RunState:
             processed_event_ids=tuple(document.get("processed_event_ids", [])),
             event_fingerprints=fingerprints,
             terminal_reason=document.get("terminal_reason") or None,
+            admission_blocked=admission_blocked,
         )
 
     def _replace(self, event: RunEvent, **changes: object) -> "RunState":
@@ -447,15 +465,18 @@ class RunState:
             ),
             processed_event_ids=self.processed_event_ids + (event.event_id,),
             terminal_reason=changes.get("terminal_reason", self.terminal_reason),
+            admission_blocked=self.admission_blocked or event.event_type == "admission_blocked",
         )
 
 
 def event_fingerprint(event: RunEvent) -> str:
+    """Return the SHA-256 fingerprint of an event payload."""
     payload = json.dumps(event.__dict__, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _parse_timestamp(value: str) -> datetime:
+    """Parse a timezone-aware RFC 3339 timestamp."""
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
@@ -466,6 +487,7 @@ def _parse_timestamp(value: str) -> datetime:
 
 
 def _validate_event_timestamp(value: object, field: str) -> None:
+    """Validate an event timestamp field."""
     try:
         _parse_timestamp(value)  # type: ignore[arg-type]
     except InvalidEventError:

@@ -38,7 +38,9 @@
         "artifact": { "$ref": "#/$defs/identity" },
         "contract": { "$ref": "#/$defs/identity" },
         "decision": { "$ref": "#/$defs/identity" },
-        "environment": { "$ref": "#/$defs/identity" }
+        "environment": { "$ref": "#/$defs/identity" },
+        "tenant": { "$ref": "#/$defs/identity" },
+        "authorization": { "$ref": "#/$defs/identity" }
       }
     },
     "source": {
