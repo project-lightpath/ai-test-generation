@@ -22,6 +22,9 @@
   },
   "allOf": [{
     "if": { "properties": { "status": { "const": "blocked" } } },
-    "then": { "properties": { "checks": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } }
+    "then": {
+      "required": ["checks"],
+      "properties": { "checks": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } }
+    }
   }]
 }

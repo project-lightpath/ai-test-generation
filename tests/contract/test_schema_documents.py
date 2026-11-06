@@ -104,6 +104,18 @@ class ContractSchemaTests(unittest.TestCase):
                 self._load("invalid", "preflight-ready-required-check-failed.json")
             )
 
+    def test_blocked_terminal_requires_a_failed_required_check(self):
+        terminal = self._load("examples", "run-terminal-blocked.json")
+        for checks in (None, [], [{"name": "optional", "required_check": False, "status": "fail"}]):
+            with self.subTest(checks=checks):
+                document = copy.deepcopy(terminal)
+                if checks is None:
+                    document.pop("checks")
+                else:
+                    document["checks"] = checks
+                with self.assertRaises(ValidationError):
+                    self._validator("run-terminal").validate(document)
+
     def test_not_evaluable_rejected_preflight_cannot_bypass_blocked_state(self):
         with self.assertRaises(ValidationError):
             self._validator("preflight").validate(

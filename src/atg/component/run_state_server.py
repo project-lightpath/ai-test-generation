@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -31,6 +32,8 @@ REQUEST_FIELDS = frozenset({
     "policy_decision", "objective_ids", "requested_by", "mode", "constraints",
     "requested_capabilities", "tenant_id", "authorization_ref", "environment",
 })
+IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
+DIGEST_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$")
 
 
 class BadRequestError(ValueError):
@@ -286,12 +289,19 @@ def _validate_identity(value, field_name: str) -> None:
     """Validate the required shape of an identity object."""
     if not isinstance(value, dict):
         raise BadRequestError(f"{field_name} must be an identity object")
+    unknown = sorted(set(value) - IDENTITY_FIELDS)
+    if unknown:
+        raise BadRequestError(f"{field_name} has unsupported identity fields: {', '.join(unknown)}")
     if not isinstance(value.get("kind"), str) or not value["kind"]:
         raise BadRequestError(f"{field_name}.kind must be a non-empty string")
     try:
         validate_identifier(value.get("id"), f"{field_name}.id")
     except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
+    if "version" in value and (not isinstance(value["version"], str) or not value["version"]):
+        raise BadRequestError(f"{field_name}.version must be a non-empty string")
+    if "digest" in value and (not isinstance(value["digest"], str) or DIGEST_PATTERN.fullmatch(value["digest"]) is None):
+        raise BadRequestError(f"{field_name}.digest must match algorithm:hex with at least 8 hex characters")
 
 
 def main() -> None:

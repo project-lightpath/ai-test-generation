@@ -129,6 +129,26 @@ class AdmissionComponentTests(unittest.TestCase):
         status, response = self.post({"contract": "atg.request", "version": "2.0"})
         self.assertEqual((status, response), (400, {"error": "admission requires atg.request version 1.0"}))
 
+    def test_admission_rejects_invalid_identity_properties(self):
+        base = {"contract": "atg.request", "version": "1.0", "request_id": "request-identity", "run_id": "run-identity", "submitted_at": "2026-11-04T18:00:00Z", "source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid"}, "repository": {"kind": "git", "id": "repo-1"}, "objective_ids": ["objective-1"], "requested_by": "user-1", "tenant_id": "tenant-1", "authorization_ref": "auth-1"}
+        cases = (
+            ("repository-extra", "repository", {"kind": "git", "id": "repo-1", "extra": "value"}, "repository has unsupported identity fields: extra"),
+            ("repository-version", "repository", {"kind": "git", "id": "repo-1", "version": ""}, "repository.version must be a non-empty string"),
+            ("repository-digest", "repository", {"kind": "git", "id": "repo-1", "digest": "sha256:not-hex"}, "repository.digest must match algorithm:hex with at least 8 hex characters"),
+            ("source-extra", "source", {"kind": "vpe", "id": "vpe-1", "extra": "value"}, "source.identity has unsupported identity fields: extra"),
+            ("source-version", "source", {"kind": "vpe", "id": "vpe-1", "version": 1}, "source.identity.version must be a non-empty string"),
+            ("source-digest", "source", {"kind": "vpe", "id": "vpe-1", "digest": "invalid"}, "source.identity.digest must match algorithm:hex with at least 8 hex characters"),
+        )
+        for name, location, identity, error in cases:
+            with self.subTest(name=name):
+                body = dict(base, request_id=f"request-{name}", run_id=f"run-{name}")
+                if location == "source":
+                    body["source"] = {"identity": identity, "locator": "https://example.invalid"}
+                else:
+                    body[location] = identity
+                status, response = self.post(body, idempotency_key=f"identity-{name}")
+                self.assertEqual((status, response), (400, {"error": error}))
+
     def test_admission_requires_transport_idempotency_header(self):
         status, body = self.post({"contract": "atg.request", "version": "1.0"}, idempotency_key=None)
         self.assertEqual(status, 400)
