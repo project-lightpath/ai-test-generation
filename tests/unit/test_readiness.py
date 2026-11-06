@@ -1,13 +1,27 @@
+import json
 import pathlib
 import sys
 import unittest
 from tempfile import TemporaryDirectory
+
+from jsonschema import Draft202012Validator, FormatChecker, RefResolver
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore  # noqa: E402
 from atg.application.admission import AdmissionRequest, AdmissionService, CheckResult  # noqa: E402
 from atg.application.readiness import PlatformReadinessService  # noqa: E402
+
+CONTRACT_ROOT = pathlib.Path(__file__).parents[2] / "contracts" / "v1"
+
+
+def validate_readiness_document(document):
+    """Validate a generated readiness document against its public schema."""
+    schemas = {path.name: json.loads(path.read_text()) for path in CONTRACT_ROOT.glob("*.schema.json")}
+    schema = schemas["platform-readiness.schema.json"]
+    store = {**schemas, schemas["common.schema.json"]["$id"]: schemas["common.schema.json"]}
+    resolver = RefResolver.from_schema(schema, store=store)
+    Draft202012Validator(schema, resolver=resolver, format_checker=FormatChecker()).validate(document)
 
 
 class FixedReadinessCheck:
@@ -30,6 +44,7 @@ class ReadinessTests(unittest.TestCase):
     def test_readiness_ids_are_unique(self):
         service = PlatformReadinessService((FixedReadinessCheck("pass", "tekton"),))
         self.assertNotEqual(service.evaluate().readiness_id, service.evaluate().readiness_id)
+
     def test_readiness_records_version_identity_timestamp_and_limitations(self):
         result = PlatformReadinessService(
             (FixedReadinessCheck("warn", "tekton"),),
@@ -38,6 +53,7 @@ class ReadinessTests(unittest.TestCase):
             limitations=({"code": "development", "description": "Development readiness profile."},),
         ).evaluate()
         document = result.to_document()
+        validate_readiness_document(document)
         self.assertEqual(document["status"], "degraded")
         self.assertEqual(document["service"]["version"], "1.2.3")
         self.assertEqual(document["checks"][0]["checked_at"], document["evaluated_at"])

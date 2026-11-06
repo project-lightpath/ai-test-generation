@@ -74,10 +74,10 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             "atg.execution",
             "atg.quality",
             "atg.provenance",
-             "atg.preflight",
-             "atg.platform_readiness",
-             "atg.run_admission",
-             "atg.run_terminal",
+            "atg.preflight",
+            "atg.platform_readiness",
+            "atg.run_admission",
+            "atg.run_terminal",
             "atg.run_event",
         }:
             require_run(document, f"{contract}.run_id")

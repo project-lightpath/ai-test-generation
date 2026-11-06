@@ -145,6 +145,8 @@ class AdmissionService:
         self._store = store
         self._checks = tuple(checks)
         self._readiness = readiness
+        if not self._checks and self._readiness is None:
+            raise ValueError("admission requires at least one check or a readiness service")
 
     def admit(self, request: AdmissionRequest) -> AdmissionResult:
         """Evaluate and durably record one idempotent admission attempt."""
@@ -204,12 +206,7 @@ class AdmissionService:
             occurred_at=now,
             reason=reason,
         )
-        if hasattr(self._store, "record_admission"):
-            return self._store.record_admission(request.idempotency_key, digest, result, event)
-        self._store.create_run(request.run_id, request.submitted_at)
-        self._store.apply(event)
-        self._store.save_admission(request.idempotency_key, digest, result)
-        return result
+        return self._store.record_admission(request.idempotency_key, digest, result, event)
 
 
 def _request_identities(request: AdmissionRequest) -> Mapping[str, Mapping[str, object]]:

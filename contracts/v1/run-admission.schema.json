@@ -23,6 +23,7 @@
   },
   "allOf": [
     { "if": { "properties": { "status": { "const": "admitted" } } }, "then": { "properties": { "checks": { "not": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } } } },
+    { "if": { "properties": { "status": { "const": "blocked" } } }, "then": { "properties": { "checks": { "contains": { "properties": { "required_check": { "const": true }, "status": { "enum": ["fail", "not_run"] } }, "required": ["required_check", "status"] } } } } },
     { "if": { "properties": { "status": { "enum": ["blocked", "rejected"] } } }, "then": { "required": ["reason"] } }
   ]
 }

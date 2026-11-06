@@ -84,6 +84,9 @@ class AdmissionComponentTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(duplicate, first)
         self.assert_admission_document(duplicate)
+        status, alternate_key = self.post(body, idempotency_key="idem-http-alternate")
+        self.assertEqual(status, 200)
+        self.assertEqual(alternate_key, first)
 
         blocked = dict(body, request_id="request-blocked", run_id="run-blocked", requested_capabilities=["go"])
         status, result = self.post(blocked, idempotency_key="idem-blocked")
@@ -120,7 +123,7 @@ class AdmissionComponentTests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertEqual(body, {"error": "source and repository must be objects"} if field in {"source", "repository"} else {"error": "objective_ids must be a non-empty list of strings"})
 
-    def test_admission_rejects_conflict_version_and_oversized_body(self):
+    def test_admission_rejects_conflict_and_version(self):
         body = {"contract": "atg.request", "version": "1.0", "request_id": "request-conflict", "run_id": "run-conflict", "submitted_at": "2026-11-04T18:00:00Z", "source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid"}, "repository": {"kind": "git", "id": "repo-1"}, "objective_ids": ["objective-1"], "requested_by": "user-1", "tenant_id": "tenant-1", "authorization_ref": "auth-1"}
         self.assertEqual(self.post(body, idempotency_key="conflict")[0], 201)
         conflict = dict(body, run_id="run-other")
@@ -147,6 +150,24 @@ class AdmissionComponentTests(unittest.TestCase):
                 else:
                     body[location] = identity
                 status, response = self.post(body, idempotency_key=f"identity-{name}")
+                self.assertEqual((status, response), (400, {"error": error}))
+
+    def test_admission_rejects_request_contract_violations(self):
+        base = {"contract": "atg.request", "version": "1.0", "request_id": "request-contract", "run_id": "run-contract", "submitted_at": "2026-11-04T18:00:00Z", "source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid"}, "repository": {"kind": "git", "id": "repo-1"}, "objective_ids": ["objective-1"], "requested_by": "user-1", "tenant_id": "tenant-1", "authorization_ref": "auth-1"}
+        cases = (
+            ("mode", {"mode": 12345}, "mode must be analyze or full"),
+            ("constraints", {"constraints": "not-a-list"}, "constraints must be a list of strings"),
+            ("capability", {"requested_capabilities": ["!!!bad id!!!"]}, "requested_capability must be a valid v1 identifier"),
+            ("duplicate-capability", {"requested_capabilities": ["java", "java"]}, "requested_capabilities must contain unique identifiers"),
+            ("duplicate-objective", {"objective_ids": ["objective-1", "objective-1"]}, "objective_ids must contain unique identifiers"),
+            ("source-extra", {"source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid", "banana": True}}, "source has unsupported fields: banana"),
+            ("source-time", {"source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid", "retrieved_at": "invalid"}}, "source.retrieved_at must be a timezone-aware RFC 3339 timestamp"),
+            ("source-digest", {"source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid", "content_digest": "invalid"}}, "source.content_digest must match algorithm:hex with at least 8 hex characters"),
+        )
+        for name, changes, error in cases:
+            with self.subTest(name=name):
+                body = dict(base, request_id=f"request-{name}", run_id=f"run-{name}", **changes)
+                status, response = self.post(body, idempotency_key=f"contract-{name}")
                 self.assertEqual((status, response), (400, {"error": error}))
 
     def test_admission_requires_transport_idempotency_header(self):

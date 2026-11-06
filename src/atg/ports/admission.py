@@ -20,16 +20,5 @@ class AdmissionStore(Protocol):
     def get_terminal(self, run_id: str) -> dict | None:
         """Return the durable terminal admission record for a run."""
 
-    def save_admission(self, key: str, request_digest: str, result: AdmissionResult) -> None:
-        """Persist an admission result."""
-
-    def create_run(self, run_id: str, created_at: str):
-        """Create or retrieve a durable run projection."""
-        ...
-
-    def apply(self, event: RunEvent):
-        """Apply one run-state event atomically."""
-        ...
-
     def record_admission(self, key: str, request_digest: str, result: AdmissionResult, event: RunEvent) -> AdmissionResult:
         """Atomically persist an admission result and its run transition."""

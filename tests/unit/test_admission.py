@@ -54,6 +54,10 @@ def request(key="key-1", run_id="run-1"):
 
 
 class AdmissionTests(unittest.TestCase):
+    def test_admission_requires_checks_or_readiness(self):
+        with self.assertRaises(ValueError):
+            AdmissionService(object(), ())
+
     def test_required_failure_creates_terminal_blocked_run(self):
         with TemporaryDirectory() as directory:
             store = SQLiteRunStateStore(pathlib.Path(directory) / "state.sqlite3")

@@ -14,10 +14,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
-from atg.application.readiness import PlatformReadinessService
 from atg.adapters.failure_register import FailureRegisterCheck
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
+from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
+from atg.application.readiness import PlatformReadinessService
 from atg.domain.run_state import (
     InvalidEventError,
     RunEvent,
@@ -33,6 +33,7 @@ REQUEST_FIELDS = frozenset({
     "requested_capabilities", "tenant_id", "authorization_ref", "environment",
 })
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
+SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
 DIGEST_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$")
 
 
@@ -172,22 +173,50 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     requested = body.get("requested_capabilities", [])
                     if not isinstance(requested, list) or not all(isinstance(value, str) for value in requested):
                         raise BadRequestError("requested_capabilities must be a list of strings")
+                    if len(requested) != len(set(requested)):
+                        raise BadRequestError("requested_capabilities must contain unique identifiers")
+                    for capability in requested:
+                        try:
+                            validate_identifier(capability, "requested_capability")
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
                     if not isinstance(body.get("source"), dict) or not isinstance(body.get("repository"), dict):
                         raise BadRequestError("source and repository must be objects")
+                    unknown_source = sorted(set(body["source"]) - SOURCE_FIELDS)
+                    if unknown_source:
+                        raise BadRequestError(f"source has unsupported fields: {', '.join(unknown_source)}")
                     _validate_identity(body.get("source", {}).get("identity"), "source.identity")
                     if not isinstance(body.get("source", {}).get("locator"), str) or not body["source"]["locator"]:
                         raise BadRequestError("source.locator must be a non-empty string")
+                    if "retrieved_at" in body["source"]:
+                        try:
+                            validate_timestamp(body["source"]["retrieved_at"], "source.retrieved_at")
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    if "content_digest" in body["source"]:
+                        _validate_digest(body["source"]["content_digest"], "source.content_digest")
                     _validate_identity(body["repository"], "repository")
                     for field in ("policy_decision", "environment"):
                         if field in body:
                             _validate_identity(body[field], field)
                     if not isinstance(body.get("objective_ids"), list) or not body["objective_ids"] or not all(isinstance(value, str) for value in body["objective_ids"]):
                         raise BadRequestError("objective_ids must be a non-empty list of strings")
+                    if len(body["objective_ids"]) != len(set(body["objective_ids"])):
+                        raise BadRequestError("objective_ids must contain unique identifiers")
                     for objective_id in body["objective_ids"]:
                         try:
                             validate_identifier(objective_id, "objective_id")
                         except ValueError as exc:
                             raise BadRequestError(str(exc)) from exc
+                    if "mode" in body and (
+                        not isinstance(body["mode"], str) or body["mode"] not in {"analyze", "full"}
+                    ):
+                        raise BadRequestError("mode must be analyze or full")
+                    if "constraints" in body and (
+                        not isinstance(body["constraints"], list)
+                        or not all(isinstance(value, str) for value in body["constraints"])
+                    ):
+                        raise BadRequestError("constraints must be a list of strings")
                     request = AdmissionRequest(
                         request_id=body["request_id"],
                         run_id=body["run_id"],
@@ -200,7 +229,8 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     )
                     existing = store.get_admission(request.idempotency_key)
                     result = admission_service.admit(request)
-                    self._respond(200 if existing is not None else 201, result.to_document())
+                    created = existing is None and store.get_admission(request.idempotency_key) is not None
+                    self._respond(201 if created else 200, result.to_document())
                     return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
@@ -300,8 +330,14 @@ def _validate_identity(value, field_name: str) -> None:
         raise BadRequestError(str(exc)) from exc
     if "version" in value and (not isinstance(value["version"], str) or not value["version"]):
         raise BadRequestError(f"{field_name}.version must be a non-empty string")
-    if "digest" in value and (not isinstance(value["digest"], str) or DIGEST_PATTERN.fullmatch(value["digest"]) is None):
-        raise BadRequestError(f"{field_name}.digest must match algorithm:hex with at least 8 hex characters")
+    if "digest" in value:
+        _validate_digest(value["digest"], f"{field_name}.digest")
+
+
+def _validate_digest(value, field_name: str) -> None:
+    """Validate a digest using the common contract definition."""
+    if not isinstance(value, str) or DIGEST_PATTERN.fullmatch(value) is None:
+        raise BadRequestError(f"{field_name} must match algorithm:hex with at least 8 hex characters")
 
 
 def main() -> None:

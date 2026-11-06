@@ -92,26 +92,6 @@ class SQLiteRunStateStore:
             return None
         return _admission_from_document(json.loads(row["result_json"]))
 
-    def save_admission(self, key: str, request_digest: str, result: AdmissionResult) -> None:
-        """Persist an admission result when using the legacy split path."""
-        with self._lock:
-            existing = self._connection.execute(
-                "SELECT request_digest FROM admissions WHERE idempotency_key = ?", (key,)
-            ).fetchone()
-            if existing is not None:
-                if existing["request_digest"] != request_digest:
-                    raise ValueError("idempotency key is bound to a different request")
-                return
-            self._connection.execute(
-                "INSERT INTO admissions(idempotency_key, request_digest, result_json, terminal_json) VALUES (?, ?, ?, ?)",
-                (
-                    key,
-                    request_digest,
-                    json.dumps(result.to_document(), sort_keys=True),
-                    json.dumps(result.terminal_document(), sort_keys=True) if result.terminal_document() else None,
-                ),
-            )
-
     def get_terminal(self, run_id: str) -> dict | None:
         """Load the durable terminal record associated with a run."""
         with self._lock:

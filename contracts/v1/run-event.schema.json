@@ -51,14 +51,14 @@
           "properties": { "event_type": { "enum": ["return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"] } },
           "required": ["reason"]
         },
-         {
-           "properties": { "event_type": { "const": "admission_blocked" } },
-           "required": ["reason"]
-         },
-         {
-           "properties": {
-             "event_type": {
-               "enum": ["admit", "analysis_started", "analysis_completed", "planning_completed", "generation_started", "generation_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap"]
+        {
+          "properties": { "event_type": { "const": "admission_blocked" } },
+          "required": ["reason"]
+        },
+        {
+          "properties": {
+            "event_type": {
+              "enum": ["admit", "analysis_started", "analysis_completed", "planning_completed", "generation_started", "generation_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap"]
             }
           }
         }
