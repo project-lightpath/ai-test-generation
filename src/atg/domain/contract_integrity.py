@@ -13,6 +13,7 @@ class ContractIntegrityError(ValueError):
     """Raised when a collection of ATG documents has broken references."""
 
     def __init__(self, errors: Iterable[str]):
+        """Create an error containing all discovered integrity violations."""
         self.errors = tuple(errors)
         super().__init__("; ".join(self.errors))
 
@@ -35,6 +36,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
         index[key] = document
 
     def require(contract: str, identifier: object, relation: str) -> Mapping[str, object] | None:
+        """Resolve a typed document reference and record missing links."""
         if not isinstance(identifier, str):
             errors.append(f"{relation} must be a string identifier")
             return None
@@ -44,6 +46,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
         return found
 
     def require_run(document: Mapping[str, object], relation: str) -> None:
+        """Require a referenced run-state document when a run ID is present."""
         run_id = document.get("run_id")
         if run_id is not None:
             require("atg.run_state", run_id, relation)
@@ -54,6 +57,10 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             require_run(document, "request.run_id")
             for objective_id in document.get("objective_ids", []):
                 require("atg.objective", objective_id, "request.objective_ids")
+        elif contract == "atg.run_admission":
+            request = _require_related(document, "atg.request", document.get("request_id"), require, errors, "run_admission.request_id")
+            if request is not None and request.get("run_id") != document.get("run_id"):
+                errors.append("run_admission.request_id belongs to a different run")
         elif contract == "atg.plan":
             require_run(document, "plan.run_id")
             for objective_id in document.get("objective_refs", []):
@@ -68,6 +75,9 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             "atg.quality",
             "atg.provenance",
             "atg.preflight",
+            "atg.platform_readiness",
+            "atg.run_admission",
+            "atg.run_terminal",
             "atg.run_event",
         }:
             require_run(document, f"{contract}.run_id")
@@ -81,6 +91,24 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 errors,
                 "feedback.checkpoint_id",
             )
+        if contract == "atg.run_terminal":
+            request = _require_related(
+                document, "atg.request", document.get("request_id"), require, errors,
+                "run_terminal.request_id",
+            )
+            admission = _require_related(
+                document, "atg.run_admission", document.get("admission_id"), require, errors,
+                "run_terminal.admission_id",
+            )
+            if request is not None and admission is not None:
+                if admission.get("request_id") != request.get("request_id"):
+                    errors.append("run_terminal admission and request IDs differ")
+                if admission.get("request_digest") != document.get("request_digest"):
+                    errors.append("run_terminal request digest differs from admission")
+                if request.get("request_digest") is not None and admission.get("request_digest") != request.get("request_digest"):
+                    errors.append("run_admission request digest differs from request")
+                if document.get("status") != admission.get("status"):
+                    errors.append("run_terminal status must match admission status")
         if contract == "atg.feedback":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "feedback.evidence_refs")
         if contract == "atg.generation":
@@ -159,6 +187,9 @@ def _document_id(document: Mapping[str, object]) -> str | None:
         "atg.quality": "quality_id",
         "atg.provenance": "provenance_id",
         "atg.preflight": "preflight_id",
+        "atg.platform_readiness": "readiness_id",
+        "atg.run_admission": "admission_id",
+        "atg.run_terminal": "terminal_id",
         "atg.compatibility": "compatibility_id",
         "atg.signed_differential": "differential_id",
         "atg.run_state": "run_id",
@@ -179,6 +210,9 @@ def _document_id(document: Mapping[str, object]) -> str | None:
         "quality_id",
         "provenance_id",
         "preflight_id",
+        "readiness_id",
+        "admission_id",
+        "terminal_id",
         "compatibility_id",
         "differential_id",
         "run_id",

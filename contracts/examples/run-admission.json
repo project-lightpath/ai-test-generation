@@ -1,0 +1,23 @@
+{
+  "contract": "atg.run_admission",
+  "version": "1.0",
+  "admission_id": "admission-001",
+  "request_id": "request-001",
+  "run_id": "run-001",
+  "evaluated_at": "2026-11-04T18:00:01Z",
+  "checks": [
+    {"name": "request-contract", "category": "self_verification", "required_check": true, "status": "fail", "detail": "execution provider unavailable"}
+  ],
+  "status": "blocked",
+  "reason": "execution provider unavailable",
+  "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "platform_readiness_id": "readiness-001",
+  "identities": {
+    "source": {"kind": "vpe-request", "id": "vpe-001", "version": "1"},
+    "repository": {"kind": "git-repository", "id": "repo-001", "version": "abc123"},
+    "contract": {"kind": "atg.request", "id": "request-contract", "version": "1.0"},
+    "decision": {"kind": "policy-decision", "id": "policy-001", "version": "1"},
+    "environment": {"kind": "atg-platform", "id": "development", "version": "1"}
+  },
+  "limitations": []
+}

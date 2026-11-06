@@ -14,6 +14,7 @@ import sqlite3
 from threading import RLock
 from typing import Iterator
 
+from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
 from atg.domain.run_state import (
     DuplicateEventError,
     RunEvent,
@@ -30,6 +31,7 @@ class SQLiteRunStateStore:
     """Transactional snapshot plus append-only event journal."""
 
     def __init__(self, database: str | Path = ":memory:") -> None:
+        """Open or create the SQLite snapshot, journal, and admission tables."""
         self._lock = RLock()
         self._connection = sqlite3.connect(
             str(database), isolation_level=None, check_same_thread=False
@@ -53,14 +55,102 @@ class SQLiteRunStateStore:
             );
             CREATE INDEX IF NOT EXISTS run_events_by_run
                 ON run_events(run_id, applied_revision);
+            CREATE TABLE IF NOT EXISTS admissions (
+                idempotency_key TEXT PRIMARY KEY,
+                request_digest TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                terminal_json TEXT
+            );
+            """
+        )
+        admission_columns = {
+            row["name"] for row in self._connection.execute("PRAGMA table_info(admissions)")
+        }
+        if "terminal_json" not in admission_columns:
+            self._connection.execute("ALTER TABLE admissions ADD COLUMN terminal_json TEXT")
+        self._connection.executescript(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS admissions_by_request
+                ON admissions(json_extract(result_json, '$.request_id'));
+            CREATE UNIQUE INDEX IF NOT EXISTS admissions_by_run
+                ON admissions(json_extract(result_json, '$.run_id'));
             """
         )
 
     def close(self) -> None:
+        """Close the SQLite connection."""
         with self._lock:
             self._connection.close()
 
+    def get_admission(self, idempotency_key: str) -> AdmissionResult | None:
+        """Load an admission result by transport idempotency key."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT result_json FROM admissions WHERE idempotency_key = ?", (idempotency_key,)
+            ).fetchone()
+        if row is None:
+            return None
+        return _admission_from_document(json.loads(row["result_json"]))
+
+    def get_terminal(self, run_id: str) -> dict | None:
+        """Load the durable terminal record associated with a run."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT terminal_json FROM admissions WHERE json_extract(result_json, '$.run_id') = ?",
+                (run_id,),
+            ).fetchone()
+        return json.loads(row["terminal_json"]) if row is not None and row["terminal_json"] else None
+
+    def record_admission(self, key: str, request_digest: str, result: AdmissionResult, event: RunEvent) -> AdmissionResult:
+        """Atomically persist admission, terminal record, and run transition."""
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT request_digest FROM admissions WHERE idempotency_key = ?", (key,)
+                ).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != request_digest:
+                        raise AdmissionConflictError("idempotency key is bound to a different request")
+                    stored = self._connection.execute(
+                        "SELECT result_json FROM admissions WHERE idempotency_key = ?", (key,)
+                    ).fetchone()
+                    self._connection.execute("COMMIT")
+                    return _admission_from_document(json.loads(stored["result_json"]))
+                existing_identity = self._connection.execute(
+                    "SELECT request_digest, result_json FROM admissions "
+                    "WHERE json_extract(result_json, '$.request_id') = ? "
+                    "OR json_extract(result_json, '$.run_id') = ?",
+                    (result.request_id, result.run_id),
+                ).fetchone()
+                if existing_identity is not None:
+                    if existing_identity["request_digest"] != request_digest:
+                        raise AdmissionConflictError("request or run identity is bound to a different admission")
+                    stored_result = _admission_from_document(json.loads(existing_identity["result_json"]))
+                    self._connection.execute("COMMIT")
+                    return stored_result
+                self._connection.execute(
+                    "INSERT OR IGNORE INTO runs(run_id, revision, state_json) VALUES (?, ?, ?)",
+                    (event.run_id, 0, json.dumps(RunState(run_id=event.run_id, updated_at=event.occurred_at).to_document(), sort_keys=True)),
+                )
+                self._apply_locked(event)
+                self._connection.execute(
+                    "INSERT INTO admissions(idempotency_key, request_digest, result_json, terminal_json) VALUES (?, ?, ?, ?)",
+                    (
+                        key,
+                        request_digest,
+                        json.dumps(result.to_document(), sort_keys=True),
+                        json.dumps(result.terminal_document(), sort_keys=True) if result.terminal_document() else None,
+                    ),
+                )
+                self._connection.execute("COMMIT")
+                return result
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
     def create_run(self, run_id: str, created_at: str) -> RunState:
+        """Create or retrieve a run snapshot."""
         with self._lock:
             validate_identifier(run_id, "run_id")
             validate_timestamp(created_at, "created_at")
@@ -73,6 +163,7 @@ class SQLiteRunStateStore:
             return self.get_run(run_id)
 
     def get_run(self, run_id: str) -> RunState:
+        """Load a run snapshot by ID."""
         with self._lock:
             row = self._connection.execute(
                 "SELECT state_json FROM runs WHERE run_id = ?", (run_id,)
@@ -82,51 +173,55 @@ class SQLiteRunStateStore:
             return RunState.from_document(json.loads(row["state_json"]))
 
     def apply(self, event: RunEvent) -> TransitionResult:
-        payload = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
-        digest = event_fingerprint(event)
+        """Apply one event in an immediate SQLite transaction."""
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                existing = self._connection.execute(
-                    "SELECT run_id, payload_digest FROM run_events WHERE event_id = ?",
-                    (event.event_id,),
-                ).fetchone()
-                if existing is not None:
-                    if existing["payload_digest"] != digest or existing["run_id"] != event.run_id:
-                        raise DuplicateEventError(f"event id {event.event_id!r} has a different payload")
-                    result = TransitionResult(self.get_run(event.run_id), duplicate=True)
-                    self._connection.execute("COMMIT")
-                    return result
-
-                state = self.get_run(event.run_id)
-                if event.expected_revision != state.revision:
-                    raise StaleEventError(
-                        f"event expects revision {event.expected_revision}, current revision is {state.revision}"
-                    )
-                result = state.apply(event)
-                self._connection.execute(
-                    "INSERT INTO run_events(event_id, run_id, applied_revision, payload_digest, payload_json, occurred_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (event.event_id, event.run_id, result.state.revision, digest, payload, event.occurred_at),
-                )
-                self._connection.execute(
-                    "UPDATE runs SET revision = ?, state_json = ? WHERE run_id = ? AND revision = ?",
-                    (
-                        result.state.revision,
-                        json.dumps(result.state.to_document(), sort_keys=True),
-                        event.run_id,
-                        state.revision,
-                    ),
-                )
-                if self._connection.execute("SELECT changes()").fetchone()[0] != 1:
-                    raise StaleEventError("run revision changed during update")
+                result = self._apply_locked(event)
                 self._connection.execute("COMMIT")
                 return result
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
 
+    def _apply_locked(self, event: RunEvent) -> TransitionResult:
+        payload = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
+        digest = event_fingerprint(event)
+        existing = self._connection.execute(
+            "SELECT run_id, payload_digest FROM run_events WHERE event_id = ?",
+            (event.event_id,),
+        ).fetchone()
+        if existing is not None:
+            if existing["payload_digest"] != digest or existing["run_id"] != event.run_id:
+                raise DuplicateEventError(f"event id {event.event_id!r} has a different payload")
+            return TransitionResult(self.get_run(event.run_id), duplicate=True)
+
+        state = self.get_run(event.run_id)
+        if event.expected_revision != state.revision:
+            raise StaleEventError(
+                f"event expects revision {event.expected_revision}, current revision is {state.revision}"
+            )
+        result = state.apply(event)
+        self._connection.execute(
+            "INSERT INTO run_events(event_id, run_id, applied_revision, payload_digest, payload_json, occurred_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (event.event_id, event.run_id, result.state.revision, digest, payload, event.occurred_at),
+        )
+        self._connection.execute(
+            "UPDATE runs SET revision = ?, state_json = ? WHERE run_id = ? AND revision = ?",
+            (
+                result.state.revision,
+                json.dumps(result.state.to_document(), sort_keys=True),
+                event.run_id,
+                state.revision,
+            ),
+        )
+        if self._connection.execute("SELECT changes()").fetchone()[0] != 1:
+            raise StaleEventError("run revision changed during update")
+        return result
+
     def events(self, run_id: str) -> Iterator[RunEvent]:
+        """Yield the append-only event journal for a run."""
         with self._lock:
             exists = self._connection.execute(
                 "SELECT 1 FROM runs WHERE run_id = ?", (run_id,)
@@ -141,6 +236,7 @@ class SQLiteRunStateStore:
             yield RunEvent(**json.loads(row["payload_json"]))
 
     def replay(self, run_id: str) -> RunState:
+        """Replay and verify the event journal against the stored snapshot."""
         with self._lock:
             self._connection.execute("BEGIN")
             try:
@@ -168,3 +264,31 @@ class SQLiteRunStateStore:
         if state.revision and state.to_document() != snapshot.to_document():
             raise RuntimeError("run snapshot and event journal projection diverged")
         return snapshot
+
+
+def _admission_from_document(document: dict) -> AdmissionResult:
+    return AdmissionResult(
+        admission_id=document["admission_id"],
+        request_id=document["request_id"],
+        run_id=document["run_id"],
+        evaluated_at=document["evaluated_at"],
+        checks=tuple(CheckResult(
+            name=check["name"],
+            required_check=check["required_check"],
+            status=check["status"],
+            category=check.get("category", "self_verification"),
+            detail=check.get("detail"),
+            evidence_refs=tuple(check.get("evidence_refs", [])),
+            capability=check.get("capability"),
+            checked_at=check.get("checked_at"),
+            component=check.get("component"),
+            limitations=tuple(check.get("limitations", [])),
+        ) for check in document["checks"]),
+        status=document["status"],
+        request_digest=document["request_digest"],
+        platform_readiness_id=document.get("platform_readiness_id"),
+        failure_register_refs=tuple(document.get("failure_register_refs", [])),
+        reason=document.get("reason"),
+        limitations=tuple(document.get("limitations", [])),
+        identities=document.get("identities", {}),
+    )

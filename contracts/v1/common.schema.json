@@ -29,6 +29,20 @@
         "digest": { "$ref": "#/$defs/digest" }
       }
     },
+    "identity_bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "$ref": "#/$defs/identity" },
+        "repository": { "$ref": "#/$defs/identity" },
+        "artifact": { "$ref": "#/$defs/identity" },
+        "contract": { "$ref": "#/$defs/identity" },
+        "decision": { "$ref": "#/$defs/identity" },
+        "environment": { "$ref": "#/$defs/identity" },
+        "tenant": { "$ref": "#/$defs/identity" },
+        "authorization": { "$ref": "#/$defs/identity" }
+      }
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
@@ -62,6 +76,25 @@
         "severity": { "enum": ["info", "warning", "error"] }
       }
     },
+    "preflight_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "required_check", "status"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "category": { "enum": ["self_verification", "repository", "source", "toolchain", "model", "execution", "policy", "evidence", "signing"] },
+        "required_check": { "type": "boolean" },
+        "status": { "enum": ["pass", "fail", "warn", "not_run"] },
+        "detail": { "type": "string" },
+        "evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "capability": { "$ref": "#/$defs/id" },
+        "checked_at": { "$ref": "#/$defs/timestamp" },
+        "component": { "$ref": "#/$defs/identity" },
+        "limitations": { "type": "array", "items": { "$ref": "#/$defs/limitation" } }
+      }
+    },
+    "preflight_status": { "enum": ["ready", "degraded", "blocked", "not_evaluable"] },
+    "admission_status": { "enum": ["admitted", "blocked", "rejected"] },
     "reviewer": {
       "type": "object",
       "additionalProperties": false,
@@ -94,6 +127,7 @@
         "stated_gap"
       ]
     },
-    "contract_version": { "const": "1.0" }
+    "contract_version": { "const": "1.0" },
+    "contract_digest": { "$ref": "#/$defs/digest" }
   }
 }

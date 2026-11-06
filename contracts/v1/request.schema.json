@@ -17,6 +17,10 @@
     "objective_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "minItems": 1, "uniqueItems": true },
     "requested_by": { "$ref": "common.schema.json#/$defs/id" },
     "mode": { "enum": ["analyze", "full"] },
-    "constraints": { "type": "array", "items": { "type": "string" } }
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "requested_capabilities": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "tenant_id": { "$ref": "common.schema.json#/$defs/id" },
+    "authorization_ref": { "$ref": "common.schema.json#/$defs/id" },
+    "environment": { "$ref": "common.schema.json#/$defs/identity" }
   }
 }

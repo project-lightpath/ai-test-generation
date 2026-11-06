@@ -1,0 +1,21 @@
+{
+  "contract": "atg.run_terminal",
+  "version": "1.0",
+  "terminal_id": "terminal-001",
+  "request_id": "request-001",
+  "run_id": "run-001",
+  "admission_id": "admission-001",
+  "status": "blocked",
+  "reason": "execution provider unavailable",
+  "request_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "checks": [
+    {"name": "request-contract", "category": "self_verification", "required_check": true, "status": "fail", "detail": "execution provider unavailable"}
+  ],
+  "failure_register_refs": ["FR-ADMISSION-001"],
+  "identities": {
+    "source": {"kind": "vpe-request", "id": "vpe-001", "version": "1"},
+    "contract": {"kind": "atg.request", "id": "request-contract", "version": "1.0"},
+    "environment": {"kind": "atg-platform", "id": "development", "version": "1"}
+  },
+  "limitations": []
+}
