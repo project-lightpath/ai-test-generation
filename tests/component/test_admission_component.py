@@ -1,3 +1,4 @@
+import http.client
 import json
 import pathlib
 import sys
@@ -9,7 +10,7 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
-from atg.component.run_state_server import create_server  # noqa: E402
+from atg.component.run_state_server import MAX_REQUEST_BYTES, create_server  # noqa: E402
 
 
 CONTRACT_ROOT = pathlib.Path(__file__).parents[2] / "contracts" / "v1"
@@ -131,6 +132,18 @@ class AdmissionComponentTests(unittest.TestCase):
         self.assertEqual((status, response), (409, {"error": "idempotency key is bound to a different request"}))
         status, response = self.post({"contract": "atg.request", "version": "2.0"})
         self.assertEqual((status, response), (400, {"error": "admission requires atg.request version 1.0"}))
+
+    def test_admission_rejects_oversized_body(self):
+        connection = http.client.HTTPConnection(*self.server.server_address)
+        connection.putrequest("POST", "/admissions")
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Idempotency-Key", "oversized")
+        connection.putheader("Content-Length", str(MAX_REQUEST_BYTES + 1))
+        connection.endheaders()
+        response = connection.getresponse()
+        self.assertEqual(response.status, 413)
+        self.assertEqual(json.loads(response.read()), {"error": f"request body exceeds {MAX_REQUEST_BYTES} bytes"})
+        connection.close()
 
     def test_admission_rejects_invalid_identity_properties(self):
         base = {"contract": "atg.request", "version": "1.0", "request_id": "request-identity", "run_id": "run-identity", "submitted_at": "2026-11-04T18:00:00Z", "source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid"}, "repository": {"kind": "git", "id": "repo-1"}, "objective_ids": ["objective-1"], "requested_by": "user-1", "tenant_id": "tenant-1", "authorization_ref": "auth-1"}
