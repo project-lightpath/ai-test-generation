@@ -4,7 +4,7 @@
   "title": "ATG request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "request_id", "run_id", "submitted_at", "source", "repository", "objective_ids", "requested_by"],
+  "required": ["contract", "version", "request_id", "run_id", "submitted_at", "source", "repository", "requested_by"],
   "properties": {
     "contract": { "const": "atg.request" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
@@ -22,5 +22,14 @@
     "tenant_id": { "$ref": "common.schema.json#/$defs/id" },
     "authorization_ref": { "$ref": "common.schema.json#/$defs/id" },
     "environment": { "$ref": "common.schema.json#/$defs/identity" }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "mode": { "const": "analyze" } },
+        "required": ["mode"]
+      },
+      "else": { "required": ["objective_ids"] }
+    }
+  ]
 }

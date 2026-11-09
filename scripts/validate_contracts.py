@@ -13,6 +13,7 @@ from referencing import Registry, Resource
 
 EXAMPLES = {
     "request": "request.json",
+    "analysis": "analysis.json",
     "evidence": "evidence.json",
     "objective": "objective.json",
     "plan": "plan.json",

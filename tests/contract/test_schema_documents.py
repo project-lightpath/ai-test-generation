@@ -198,6 +198,16 @@ class ContractSchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self._validator("request").validate(request)
 
+    def test_analyze_mode_may_discover_objectives_but_full_mode_requires_them(self):
+        request = self._load("examples", "request.json")
+        request["mode"] = "analyze"
+        request.pop("objective_ids")
+        self._validator("request").validate(request)
+
+        request["mode"] = "full"
+        with self.assertRaises(ValidationError):
+            self._validator("request").validate(request)
+
     def test_serialized_run_states_validate_for_initial_active_and_blocked_states(self):
         initial = RunState(run_id="run-1", updated_at="2026-11-03T17:00:00Z")
         self._validator("run-state").validate(initial.to_document())

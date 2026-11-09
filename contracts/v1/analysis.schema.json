@@ -24,8 +24,55 @@
     },
     "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
     "objective_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "objective_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id", "objective_ref", "statement", "disposition", "validation_role",
+          "expected_behavior_source", "evidence_refs", "target_refs", "existing_test_refs",
+          "assumptions", "limitations", "safety_flags"
+        ],
+        "properties": {
+          "candidate_id": { "$ref": "common.schema.json#/$defs/id" },
+          "objective_ref": { "$ref": "common.schema.json#/$defs/id" },
+          "statement": { "type": "string", "minLength": 1 },
+          "disposition": { "enum": ["candidate", "duplicate_candidate", "needs_evidence", "unsupported", "stated_gap"] },
+          "validation_role": { "enum": ["exposure", "fix_pinning", "regression", "characterization", "compatibility", "gap_analysis"] },
+          "expected_behavior_source": { "enum": ["attributable", "characterization", "unresolved"] },
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+          "target_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+          "existing_test_refs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "assumptions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "safety_flags": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "duplicate_of": { "$ref": "common.schema.json#/$defs/id" }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "disposition": { "const": "duplicate_candidate" } } },
+            "then": { "required": ["duplicate_of"] }
+          }
+        ]
+      }
+    },
     "provenance_ref": { "$ref": "common.schema.json#/$defs/id" },
     "artifact_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "status", "required"],
+        "properties": {
+          "capability": { "$ref": "common.schema.json#/$defs/id" },
+          "status": { "enum": ["available", "partial", "unavailable"] },
+          "required": { "type": "boolean" },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "fact_summary": {
       "type": "array",
       "items": {

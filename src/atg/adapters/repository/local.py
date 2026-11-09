@@ -7,6 +7,7 @@ from pathlib import Path
 
 from atg.domain.repository_analysis import (
     AnalysisFinding,
+    CapabilityObservation,
     ContextFact,
     CoverageObservation,
     RepositoryContextResult,
@@ -160,6 +161,11 @@ class LocalRepositoryContextAdapter:
             tuple(sorted(tests, key=lambda test: test.path)),
             tuple(sorted(coverage, key=lambda item: (item.path, item.kind))),
             tuple(findings),
+            (
+                CapabilityObservation("repository-discovery", "available"),
+                CapabilityObservation("test-discovery", "available"),
+                CapabilityObservation("coverage-discovery", "available"),
+            ),
         )
 
 

@@ -48,6 +48,22 @@ class AdmissionComponentTests(unittest.TestCase):
             finally:
                 error.close()
 
+    def valid_request(self):
+        """Return a minimal valid admission request document."""
+        return {
+            "contract": "atg.request",
+            "version": "1.0",
+            "request_id": "request-analyze",
+            "run_id": "run-analyze",
+            "submitted_at": "2026-11-04T18:00:00Z",
+            "source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid/request"},
+            "repository": {"kind": "git", "id": "repo-1"},
+            "objective_ids": ["objective-1"],
+            "requested_by": "user-1",
+            "tenant_id": "tenant-1",
+            "authorization_ref": "authorization-1",
+        }
+
     def assert_admission_document(self, document):
         """Validate an HTTP admission response against the public schema."""
         schemas = {path.name: json.loads(path.read_text()) for path in CONTRACT_ROOT.glob("*.schema.json")}
@@ -122,7 +138,15 @@ class AdmissionComponentTests(unittest.TestCase):
                 request.pop(field)
                 status, body = self.post(request, idempotency_key=f"missing-{field}")
                 self.assertEqual(status, 400)
-                self.assertEqual(body, {"error": "source and repository must be objects"} if field in {"source", "repository"} else {"error": "objective_ids must be a non-empty list of strings"})
+                self.assertEqual(body, {"error": "source and repository must be objects"} if field in {"source", "repository"} else {"error": "full admission requires at least one objective_id"})
+
+    def test_analyze_only_admission_may_omit_seed_objectives(self):
+        request = self.valid_request()
+        request["mode"] = "analyze"
+        request.pop("objective_ids")
+        status, body = self.post(request, idempotency_key="analyze-discovery")
+        self.assertEqual(status, 201)
+        self.assertEqual(body["status"], "admitted")
 
     def test_admission_rejects_conflict_and_version(self):
         body = {"contract": "atg.request", "version": "1.0", "request_id": "request-conflict", "run_id": "run-conflict", "submitted_at": "2026-11-04T18:00:00Z", "source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid"}, "repository": {"kind": "git", "id": "repo-1"}, "objective_ids": ["objective-1"], "requested_by": "user-1", "tenant_id": "tenant-1", "authorization_ref": "auth-1"}

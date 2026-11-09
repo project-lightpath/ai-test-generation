@@ -65,6 +65,22 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             for objective_id in document.get("objective_refs", []):
                 require("atg.objective", objective_id, "analysis.objective_refs")
             _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "analysis.provenance_ref")
+            candidates = document.get("objective_candidates", [])
+            candidate_ids = {candidate.get("candidate_id") for candidate in candidates}
+            if len(candidate_ids) != len(candidates):
+                errors.append("analysis.objective_candidates requires unique candidate IDs")
+            for candidate in candidates:
+                objective_ref = candidate.get("objective_ref")
+                require("atg.objective", objective_ref, "analysis.objective_candidates.objective_ref")
+                if objective_ref not in document.get("objective_refs", []):
+                    errors.append("analysis candidate objective_ref is absent from objective_refs")
+                _require_evidence_refs(
+                    candidate.get("evidence_refs", []), require, errors,
+                    "analysis.objective_candidates.evidence_refs",
+                )
+                duplicate_of = candidate.get("duplicate_of")
+                if duplicate_of is not None and duplicate_of not in candidate_ids:
+                    errors.append("analysis duplicate candidate references a missing candidate")
             for fact in document.get("fact_summary", []):
                 _require_evidence_refs(fact.get("evidence_refs", []), require, errors, "analysis.fact_summary.evidence_refs")
             for finding in document.get("findings", []):

@@ -11,8 +11,27 @@
   "outcome": "needs_human_review",
   "evidence_refs": ["evidence-001"],
   "objective_refs": ["objective-001"],
+  "objective_candidates": [
+    {
+      "candidate_id": "candidate-objective-001",
+      "objective_ref": "objective-001",
+      "statement": "Add a regression test for the target behavior.",
+      "disposition": "candidate",
+      "validation_role": "regression",
+      "expected_behavior_source": "characterization",
+      "evidence_refs": ["evidence-001"],
+      "target_refs": [],
+      "existing_test_refs": [],
+      "assumptions": [],
+      "limitations": [],
+      "safety_flags": ["existing_tests_require_mapping"]
+    }
+  ],
   "provenance_ref": "provenance-001",
   "artifact_refs": ["artifact-analysis-001"],
+  "capabilities": [
+    {"capability": "repository-discovery", "status": "available", "required": true}
+  ],
   "fact_summary": [
     {
       "fact_id": "fact-source-root",

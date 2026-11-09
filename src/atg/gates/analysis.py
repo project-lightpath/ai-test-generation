@@ -28,6 +28,10 @@ def evaluate_analysis(
     findings = list(context.findings)
     blocked = any(finding.kind in {"conflicting", "unauthorized"} for finding in findings)
     not_evaluable = any(finding.kind == "stale" for finding in findings)
+    not_evaluable = not_evaluable or any(
+        capability.required and capability.status == "unavailable"
+        for capability in context.capabilities
+    )
     evidence_by_id = {
         document.get("evidence_id"): document
         for document in evidence

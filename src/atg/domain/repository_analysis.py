@@ -11,6 +11,7 @@ from pathlib import PurePosixPath
 FACT_ORIGINS = frozenset({"supplied", "discovered", "inferred"})
 FINDING_KINDS = frozenset({"missing", "stale", "conflicting", "ambiguous", "unsupported", "unauthorized", "incomplete"})
 COVERAGE_KINDS = frozenset({"configuration", "report", "static_reference", "runtime"})
+CAPABILITY_STATUSES = frozenset({"available", "partial", "unavailable"})
 
 
 def _validate_relative_path(value: str, field: str) -> None:
@@ -43,6 +44,7 @@ class ContextFact:
     origin: str
     claim: str
     source_path: str | None = None
+    evidence_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         """Validate fact identity, origin, claim, and optional citation path."""
@@ -52,6 +54,25 @@ class ContextFact:
             raise ValueError(f"unsupported fact origin: {self.origin}")
         if self.source_path is not None:
             _validate_relative_path(self.source_path, "source_path")
+        if any(not reference for reference in self.evidence_refs):
+            raise ValueError("fact evidence references must be non-empty")
+
+
+@dataclass(frozen=True)
+class CapabilityObservation:
+    """Availability of one explicitly named analysis capability."""
+
+    capability: str
+    status: str
+    required: bool = False
+    detail: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate capability identity and controlled availability status."""
+        if not self.capability:
+            raise ValueError("capability identity is required")
+        if self.status not in CAPABILITY_STATUSES:
+            raise ValueError(f"unsupported capability status: {self.status}")
 
 
 @dataclass(frozen=True)
@@ -129,6 +150,7 @@ class RepositoryContextResult:
     tests: tuple[TestInventoryEntry, ...]
     coverage: tuple[CoverageObservation, ...]
     findings: tuple[AnalysisFinding, ...]
+    capabilities: tuple[CapabilityObservation, ...] = ()
 
     def digest(self) -> str:
         """Return a stable digest over the normalized analysis result."""

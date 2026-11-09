@@ -16,8 +16,11 @@ from urllib.parse import unquote, urlsplit
 
 from atg.adapters.failure_register import FailureRegisterCheck
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
+from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
+from atg.application.analysis import AnalysisConflictError, AnalysisRequest, AnalysisService
 from atg.application.readiness import PlatformReadinessService
+from atg.domain.repository_analysis import RepositorySubject
 from atg.domain.run_state import (
     InvalidEventError,
     RunEvent,
@@ -32,6 +35,10 @@ REQUEST_FIELDS = frozenset({
     "policy_decision", "objective_ids", "requested_by", "mode", "constraints",
     "requested_capabilities", "tenant_id", "authorization_ref", "environment",
 })
+ANALYSIS_FIELDS = frozenset({
+    "analysis_id", "request_id", "run_id", "repository", "expected_revision", "occurred_at",
+    "objective_refs", "requested_capabilities", "supplied_evidence", "supplied_objectives",
+})
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
 DIGEST_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$")
@@ -45,7 +52,14 @@ class RequestTooLargeError(ValueError):
     """Raised when an HTTP request exceeds the component limit."""
 
 
-def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int = 0, capabilities=()):
+def create_server(
+    database: str = ":memory:",
+    host: str = "127.0.0.1",
+    port: int = 0,
+    capabilities=(),
+    repository_roots=None,
+    analyzers=(),
+):
     """Create the local HTTP development component."""
     store = SQLiteRunStateStore(database)
 
@@ -101,6 +115,8 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
     )
     readiness_service = PlatformReadinessService((ContractCheck(), failure_register))
     admission_service = AdmissionService(store, (CapabilityCheck(), IdentityCheck()), readiness=readiness_service)
+    repository_roots = dict(repository_roots or {})
+    analysis_service = AnalysisService(store, LocalRepositoryContextAdapter(), tuple(analyzers))
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
@@ -113,6 +129,12 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
             try:
                 if len(parts) == 2 and parts[0] == "runs":
                     self._respond(200, store.get_run(parts[1]).to_document())
+                elif len(parts) == 2 and parts[0] == "analyses":
+                    record = store.get_analysis(parts[1])
+                    if record is None:
+                        self._respond(404, {"error": "analysis not found"})
+                    else:
+                        self._respond(200, _analysis_document(record))
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
                 elif parts == ["readiness"]:
@@ -199,11 +221,14 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     for field in ("policy_decision", "environment"):
                         if field in body:
                             _validate_identity(body[field], field)
-                    if not isinstance(body.get("objective_ids"), list) or not body["objective_ids"] or not all(isinstance(value, str) for value in body["objective_ids"]):
-                        raise BadRequestError("objective_ids must be a non-empty list of strings")
-                    if len(body["objective_ids"]) != len(set(body["objective_ids"])):
+                    objective_ids = body.get("objective_ids", [])
+                    if not isinstance(objective_ids, list) or not all(isinstance(value, str) for value in objective_ids):
+                        raise BadRequestError("objective_ids must be a list of strings")
+                    if body.get("mode") != "analyze" and not objective_ids:
+                        raise BadRequestError("full admission requires at least one objective_id")
+                    if len(objective_ids) != len(set(objective_ids)):
                         raise BadRequestError("objective_ids must contain unique identifiers")
-                    for objective_id in body["objective_ids"]:
+                    for objective_id in objective_ids:
                         try:
                             validate_identifier(objective_id, "objective_id")
                         except ValueError as exc:
@@ -231,6 +256,58 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                     result = admission_service.admit(request)
                     created = existing is None and store.get_admission(request.idempotency_key) is not None
                     self._respond(201 if created else 200, result.to_document())
+                    return
+                if parts == ["analyses"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("analysis body must be a JSON object")
+                    unknown = sorted(set(body) - ANALYSIS_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported analysis fields: {', '.join(unknown)}")
+                    repository = body.get("repository")
+                    _validate_identity(repository, "repository")
+                    if not isinstance(repository.get("version"), str) or not repository["version"]:
+                        raise BadRequestError("repository.version is required for analysis")
+                    repository_root = repository_roots.get(repository["id"])
+                    if repository_root is None:
+                        raise BadRequestError("repository is not materialized for local analysis")
+                    for field in ("analysis_id", "request_id", "run_id"):
+                        try:
+                            validate_identifier(body.get(field), field)
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body.get("occurred_at"), "occurred_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body.get("expected_revision"), int) or isinstance(body.get("expected_revision"), bool):
+                        raise BadRequestError("expected_revision must be a non-negative integer")
+                    for field in ("objective_refs", "requested_capabilities"):
+                        values = body.get(field, [])
+                        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+                            raise BadRequestError(f"{field} must be a list of strings")
+                    for field in ("supplied_evidence", "supplied_objectives"):
+                        values = body.get(field, [])
+                        if not isinstance(values, list) or not all(isinstance(value, dict) for value in values):
+                            raise BadRequestError(f"{field} must be a list of objects")
+                    try:
+                        request = AnalysisRequest(
+                            analysis_id=body["analysis_id"],
+                            request_id=body["request_id"],
+                            run_id=body["run_id"],
+                            repository_root=str(repository_root),
+                            subject=RepositorySubject(repository["id"], repository["version"]),
+                            expected_revision=body["expected_revision"],
+                            occurred_at=body["occurred_at"],
+                            objective_refs=tuple(body.get("objective_refs", [])),
+                            supplied_evidence=tuple(body.get("supplied_evidence", [])),
+                            supplied_objectives=tuple(body.get("supplied_objectives", [])),
+                            requested_capabilities=tuple(body.get("requested_capabilities", [])),
+                        )
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    existing = store.get_analysis(request.analysis_id)
+                    result = analysis_service.analyze(request)
+                    self._respond(200 if existing is not None else 201, _analysis_document(result))
                     return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
@@ -267,6 +344,8 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 self._respond(409, {"error": str(exc)})
             except AdmissionConflictError as exc:
                 self._respond(409, {"error": str(exc)})
+            except AnalysisConflictError as exc:
+                self._respond(409, {"error": str(exc)})
 
         def _parts(self):
             """Return decoded non-empty URL path components."""
@@ -301,6 +380,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
     server = ThreadingHTTPServer((host, port), Handler)
     server.store = store
     server.admission_service = admission_service
+    server.analysis_service = analysis_service
     server.readiness_service = readiness_service
     return server
 
@@ -313,6 +393,19 @@ def _event_document(event: RunEvent) -> dict:
     }
     document.update({key: value for key, value in event.__dict__.items() if value is not None})
     return document
+
+
+def _analysis_document(record) -> dict:
+    """Serialize normalized analysis output without exposing raw replay content."""
+    return {
+        "duplicate": record.duplicate,
+        "manifest": dict(record.manifest),
+        "checkpoint": dict(record.checkpoint) if record.checkpoint is not None else None,
+        "evidence": [dict(document) for document in record.evidence],
+        "objectives": [dict(document) for document in record.objectives],
+        "provenance": dict(record.provenance),
+        "artifacts": [dict(document["artifact"]) for document in record.artifacts],
+    }
 
 
 def _validate_identity(value, field_name: str) -> None:
