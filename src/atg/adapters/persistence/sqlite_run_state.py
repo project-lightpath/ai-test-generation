@@ -15,6 +15,7 @@ from threading import RLock
 from typing import Iterator
 
 from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
+from atg.application.analysis import AnalysisConflictError, AnalysisRecord
 from atg.domain.run_state import (
     DuplicateEventError,
     InvalidTransitionError,
@@ -62,6 +63,13 @@ class SQLiteRunStateStore:
                 result_json TEXT NOT NULL,
                 terminal_json TEXT
             );
+            CREATE TABLE IF NOT EXISTS analyses (
+                analysis_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                request_digest TEXT NOT NULL,
+                bundle_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS analyses_by_run ON analyses(run_id);
             """
         )
         admission_columns = {
@@ -101,6 +109,68 @@ class SQLiteRunStateStore:
                 (run_id,),
             ).fetchone()
         return json.loads(row["terminal_json"]) if row is not None and row["terminal_json"] else None
+
+    def get_admission_for_run(self, run_id: str) -> AdmissionResult | None:
+        """Load the durable admission result associated with a run."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT result_json FROM admissions WHERE json_extract(result_json, '$.run_id') = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _admission_from_document(json.loads(row["result_json"]))
+
+    def get_analysis(self, analysis_id: str) -> AnalysisRecord | None:
+        """Load a completed analysis bundle by stable identity."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT bundle_json FROM analyses WHERE analysis_id = ?", (analysis_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return AnalysisRecord.from_storage_document(json.loads(row["bundle_json"]))
+
+    def record_analysis(
+        self,
+        record: AnalysisRecord,
+        completion_event: RunEvent,
+        checkpoint_event: RunEvent,
+    ) -> AnalysisRecord:
+        """Atomically persist analysis output, completion, and review creation."""
+        analysis_id = str(record.manifest["analysis_id"])
+        run_id = str(record.manifest["run_id"])
+        _validate_analysis_record(record, completion_event, checkpoint_event)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT request_digest, bundle_json FROM analyses WHERE analysis_id = ?",
+                    (analysis_id,),
+                ).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != record.request_digest:
+                        raise AnalysisConflictError("analysis identity is bound to different inputs")
+                    self._connection.execute("COMMIT")
+                    return AnalysisRecord.from_storage_document(
+                        json.loads(existing["bundle_json"]), duplicate=True
+                    )
+                self._apply_locked(completion_event)
+                self._apply_locked(checkpoint_event)
+                self._connection.execute(
+                    "INSERT INTO analyses(analysis_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)",
+                    (
+                        analysis_id,
+                        run_id,
+                        record.request_digest,
+                        json.dumps(record.to_storage_document(), sort_keys=True),
+                    ),
+                )
+                self._connection.execute("COMMIT")
+                return record
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
 
     def record_admission(self, key: str, request_digest: str, result: AdmissionResult, event: RunEvent) -> AdmissionResult:
         """Atomically persist admission, terminal record, and run transition."""
@@ -302,3 +372,33 @@ def _admission_from_document(document: dict) -> AdmissionResult:
         limitations=tuple(document.get("limitations", [])),
         identities=document.get("identities", {}),
     )
+
+
+def _validate_analysis_record(
+    record: AnalysisRecord,
+    completion_event: RunEvent,
+    checkpoint_event: RunEvent,
+) -> None:
+    """Reject bundles whose manifest, artifact, checkpoint, and events diverge."""
+    manifest = record.manifest
+    checkpoint = record.checkpoint
+    run_id = manifest.get("run_id")
+    if completion_event.run_id != run_id or checkpoint_event.run_id != run_id or checkpoint.get("run_id") != run_id:
+        raise ValueError("analysis bundle and lifecycle events must belong to one run")
+    if completion_event.event_type != "analysis_completed":
+        raise ValueError("analysis persistence requires an analysis_completed event")
+    if checkpoint_event.event_type != "checkpoint_created" or checkpoint_event.checkpoint_kind != "analysis_review":
+        raise ValueError("analysis persistence requires an analysis review checkpoint event")
+    if checkpoint_event.checkpoint_id != checkpoint.get("checkpoint_id"):
+        raise ValueError("checkpoint event and document identities differ")
+    reviewed = checkpoint.get("reviewed_artifact")
+    if not isinstance(reviewed, dict) or reviewed.get("artifact_id") not in manifest.get("artifact_refs", []):
+        raise ValueError("analysis checkpoint must review a referenced analysis artifact")
+    matching = [
+        artifact.get("artifact")
+        for artifact in record.artifacts
+        if isinstance(artifact.get("artifact"), dict)
+        and artifact["artifact"].get("artifact_id") == reviewed.get("artifact_id")
+    ]
+    if matching != [reviewed]:
+        raise ValueError("analysis checkpoint artifact metadata differs from persisted output")

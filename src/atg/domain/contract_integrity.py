@@ -196,6 +196,7 @@ def _document_id(document: Mapping[str, object]) -> str | None:
     """Return the contract-specific identifier from a document."""
     contract_fields = {
         "atg.request": "request_id",
+        "atg.analysis": "analysis_id",
         "atg.evidence": "evidence_id",
         "atg.objective": "objective_id",
         "atg.plan": "plan_id",
@@ -219,6 +220,7 @@ def _document_id(document: Mapping[str, object]) -> str | None:
         return document[preferred] if isinstance(document.get(preferred), str) else None
     for field in (
         "request_id",
+        "analysis_id",
         "evidence_id",
         "objective_id",
         "plan_id",
