@@ -88,6 +88,24 @@ class ContractSchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self._validator("run-event").validate(self._load("invalid", "run-event-missing-decision.json"))
 
+    def test_analysis_gate_events_require_reasons(self):
+        event = self._load("examples", "run-event-checkpoint.json")
+        for event_type in ("analysis_blocked", "analysis_inconclusive"):
+            with self.subTest(event_type=event_type):
+                document = {
+                    "contract": "atg.run_event",
+                    "version": "1.0",
+                    "event_id": f"event-{event_type}",
+                    "run_id": event["run_id"],
+                    "event_type": event_type,
+                    "expected_revision": 2,
+                    "occurred_at": event["occurred_at"],
+                }
+                with self.assertRaises(ValidationError):
+                    self._validator("run-event").validate(document)
+                document["reason"] = "analysis evidence gap"
+                self._validator("run-event").validate(document)
+
     def test_unsupported_positive_differential_is_rejected(self):
         with self.assertRaises(ValidationError):
             self._validator("signed-differential").validate(

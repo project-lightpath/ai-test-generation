@@ -75,12 +75,15 @@ class CoverageObservation:
 
     path: str
     kind: str
+    evidence_ref: str | None = None
 
     def __post_init__(self) -> None:
         """Validate the coverage location and evidence kind."""
         _validate_relative_path(self.path, "coverage path")
         if self.kind not in COVERAGE_KINDS:
             raise ValueError(f"unsupported coverage observation kind: {self.kind}")
+        if self.evidence_ref is not None and not self.evidence_ref:
+            raise ValueError("coverage evidence_ref must be non-empty when provided")
 
 
 @dataclass(frozen=True)

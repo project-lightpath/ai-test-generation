@@ -20,10 +20,10 @@ class AnalysisStore(Protocol):
     def record_analysis(
         self,
         record: "AnalysisRecord",
-        completion_event: RunEvent,
-        checkpoint_event: RunEvent,
+        outcome_event: RunEvent,
+        checkpoint_event: RunEvent | None,
     ) -> "AnalysisRecord":
-        """Atomically persist output, completion, and its review checkpoint."""
+        """Atomically persist output and its gated lifecycle outcome."""
 
     def get_admission_for_run(self, run_id: str) -> AdmissionResult | None:
         """Return the durable admission that owns a run."""

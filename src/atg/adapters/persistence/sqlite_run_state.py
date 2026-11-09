@@ -134,13 +134,13 @@ class SQLiteRunStateStore:
     def record_analysis(
         self,
         record: AnalysisRecord,
-        completion_event: RunEvent,
-        checkpoint_event: RunEvent,
+        outcome_event: RunEvent,
+        checkpoint_event: RunEvent | None,
     ) -> AnalysisRecord:
-        """Atomically persist analysis output, completion, and review creation."""
+        """Atomically persist analysis output and its gated lifecycle outcome."""
         analysis_id = str(record.manifest["analysis_id"])
         run_id = str(record.manifest["run_id"])
-        _validate_analysis_record(record, completion_event, checkpoint_event)
+        _validate_analysis_record(record, outcome_event, checkpoint_event)
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -155,8 +155,9 @@ class SQLiteRunStateStore:
                     return AnalysisRecord.from_storage_document(
                         json.loads(existing["bundle_json"]), duplicate=True
                     )
-                self._apply_locked(completion_event)
-                self._apply_locked(checkpoint_event)
+                self._apply_locked(outcome_event)
+                if checkpoint_event is not None:
+                    self._apply_locked(checkpoint_event)
                 self._connection.execute(
                     "INSERT INTO analyses(analysis_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)",
                     (
@@ -376,17 +377,24 @@ def _admission_from_document(document: dict) -> AdmissionResult:
 
 def _validate_analysis_record(
     record: AnalysisRecord,
-    completion_event: RunEvent,
-    checkpoint_event: RunEvent,
+    outcome_event: RunEvent,
+    checkpoint_event: RunEvent | None,
 ) -> None:
     """Reject bundles whose manifest, artifact, checkpoint, and events diverge."""
     manifest = record.manifest
     checkpoint = record.checkpoint
     run_id = manifest.get("run_id")
-    if completion_event.run_id != run_id or checkpoint_event.run_id != run_id or checkpoint.get("run_id") != run_id:
-        raise ValueError("analysis bundle and lifecycle events must belong to one run")
-    if completion_event.event_type != "analysis_completed":
-        raise ValueError("analysis persistence requires an analysis_completed event")
+    if outcome_event.run_id != run_id:
+        raise ValueError("analysis bundle and lifecycle event must belong to one run")
+    if checkpoint is None:
+        expected = "analysis_blocked" if manifest.get("outcome") == "blocked" else "analysis_inconclusive"
+        if checkpoint_event is not None or outcome_event.event_type != expected:
+            raise ValueError("non-reviewable analysis requires its matching terminal event")
+        return
+    if checkpoint_event is None or checkpoint_event.run_id != run_id or checkpoint.get("run_id") != run_id:
+        raise ValueError("analysis bundle and checkpoint events must belong to one run")
+    if outcome_event.event_type != "analysis_completed":
+        raise ValueError("reviewable analysis persistence requires an analysis_completed event")
     if checkpoint_event.event_type != "checkpoint_created" or checkpoint_event.checkpoint_kind != "analysis_review":
         raise ValueError("analysis persistence requires an analysis review checkpoint event")
     if checkpoint_event.checkpoint_id != checkpoint.get("checkpoint_id"):

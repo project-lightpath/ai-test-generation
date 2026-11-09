@@ -9,6 +9,7 @@ from typing import Mapping
 
 from atg.domain.repository_analysis import RepositoryContextResult, RepositorySubject
 from atg.domain.run_state import RunEvent, validate_identifier, validate_timestamp
+from atg.gates.analysis import evaluate_analysis
 from atg.ports.analysis import AnalysisStore
 from atg.ports.repository import RepositoryContextPort, RepositoryContextRequest
 
@@ -63,7 +64,7 @@ class AnalysisRecord:
 
     request_digest: str
     manifest: Mapping[str, object]
-    checkpoint: Mapping[str, object]
+    checkpoint: Mapping[str, object] | None
     evidence: tuple[Mapping[str, object], ...]
     provenance: Mapping[str, object]
     artifacts: tuple[Mapping[str, object], ...]
@@ -74,7 +75,7 @@ class AnalysisRecord:
         return {
             "request_digest": self.request_digest,
             "manifest": dict(self.manifest),
-            "checkpoint": dict(self.checkpoint),
+            "checkpoint": dict(self.checkpoint) if self.checkpoint is not None else None,
             "evidence": [dict(document) for document in self.evidence],
             "provenance": dict(self.provenance),
             "artifacts": [dict(document) for document in self.artifacts],
@@ -86,7 +87,7 @@ class AnalysisRecord:
         return cls(
             request_digest=str(document["request_digest"]),
             manifest=dict(document["manifest"]),  # type: ignore[arg-type]
-            checkpoint=dict(document["checkpoint"]),  # type: ignore[arg-type]
+            checkpoint=dict(document["checkpoint"]) if document.get("checkpoint") is not None else None,  # type: ignore[arg-type]
             evidence=tuple(dict(item) for item in document.get("evidence", [])),  # type: ignore[arg-type]
             provenance=dict(document["provenance"]),  # type: ignore[arg-type]
             artifacts=tuple(dict(item) for item in document.get("artifacts", [])),  # type: ignore[arg-type]
@@ -125,23 +126,35 @@ class AnalysisService:
         self._store.apply(start_event)
         context = self._repository_context.collect(RepositoryContextRequest(request.subject, request.repository_root))
         record = _build_record(request, digest, context)
-        completion_event = RunEvent(
-            event_id=f"{request.analysis_id}-completed",
-            run_id=request.run_id,
-            event_type="analysis_completed",
-            expected_revision=request.expected_revision + 1,
-            occurred_at=request.occurred_at,
-        )
-        checkpoint_event = RunEvent(
-            event_id=f"{request.analysis_id}-review-created",
-            run_id=request.run_id,
-            event_type="checkpoint_created",
-            expected_revision=request.expected_revision + 2,
-            occurred_at=request.occurred_at,
-            checkpoint_id=f"checkpoint-{request.analysis_id}",
-            checkpoint_kind="analysis_review",
-        )
-        return self._store.record_analysis(record, completion_event, checkpoint_event)
+        if record.checkpoint is not None:
+            outcome_event = RunEvent(
+                event_id=f"{request.analysis_id}-completed",
+                run_id=request.run_id,
+                event_type="analysis_completed",
+                expected_revision=request.expected_revision + 1,
+                occurred_at=request.occurred_at,
+            )
+            checkpoint_event = RunEvent(
+                event_id=f"{request.analysis_id}-review-created",
+                run_id=request.run_id,
+                event_type="checkpoint_created",
+                expected_revision=request.expected_revision + 2,
+                occurred_at=request.occurred_at,
+                checkpoint_id=f"checkpoint-{request.analysis_id}",
+                checkpoint_kind="analysis_review",
+            )
+        else:
+            outcome = str(record.manifest["outcome"])
+            outcome_event = RunEvent(
+                event_id=f"{request.analysis_id}-{outcome}",
+                run_id=request.run_id,
+                event_type="analysis_blocked" if outcome == "blocked" else "analysis_inconclusive",
+                expected_revision=request.expected_revision + 1,
+                occurred_at=request.occurred_at,
+                reason="; ".join(record.manifest["gaps"]),  # type: ignore[arg-type]
+            )
+            checkpoint_event = None
+        return self._store.record_analysis(record, outcome_event, checkpoint_event)
 
 
 def _build_record(request: AnalysisRequest, request_digest: str, context: RepositoryContextResult) -> AnalysisRecord:
@@ -168,7 +181,7 @@ def _build_record(request: AnalysisRequest, request_digest: str, context: Reposi
     )
     analysis_artifact_id = f"artifact-{request.analysis_id}"
     provenance_id = f"provenance-{request.analysis_id}"
-    manifest = {
+    manifest: dict[str, object] = {
         "contract": "atg.analysis",
         "version": "1.0",
         "analysis_id": request.analysis_id,
@@ -214,6 +227,18 @@ def _build_record(request: AnalysisRequest, request_digest: str, context: Reposi
         "gaps": [finding.description for finding in context.findings],
         "limitations": [],
     }
+    gate = evaluate_analysis(request.subject, manifest, evidence, context)
+    manifest["outcome"] = gate.outcome
+    manifest["findings"] = [
+        {
+            "finding_id": finding.finding_id,
+            "kind": finding.kind,
+            "description": finding.description,
+            **({"resolution": "Review or supply the missing repository context."} if finding.kind in {"missing", "incomplete"} else {}),
+        }
+        for finding in gate.findings
+    ]
+    manifest["gaps"] = [finding.description for finding in gate.findings]
     analysis_artifact = _content_artifact(
         analysis_artifact_id,
         "application/vnd.atg.analysis+json",
@@ -249,7 +274,7 @@ def _build_record(request: AnalysisRequest, request_digest: str, context: Reposi
     return AnalysisRecord(
         request_digest,
         manifest,
-        checkpoint,
+        checkpoint if gate.reviewable else None,
         evidence,
         provenance,
         (profile_artifact, tests_artifact, coverage_artifact, analysis_artifact),

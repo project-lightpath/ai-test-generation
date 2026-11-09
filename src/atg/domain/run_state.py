@@ -40,7 +40,7 @@ class SupersessionError(RunStateError):
 
 
 EVENT_TYPES = frozenset({
-    "admit", "admission_blocked", "analysis_started", "analysis_completed", "checkpoint_created", "checkpoint_expired",
+    "admit", "admission_blocked", "analysis_started", "analysis_completed", "analysis_blocked", "analysis_inconclusive", "checkpoint_created", "checkpoint_expired",
     "decision_recorded", "planning_completed", "generation_started", "generation_completed",
     "execution_started", "execution_completed", "quality_passed", "quality_blocked",
     "quality_inconclusive", "quality_gap", "retry_requested", "return_to_analyze",
@@ -108,7 +108,7 @@ class RunEvent:
         if self.event_type == "decision_recorded":
             if not all((self.checkpoint_id, self.decision, self.decision_id, self.actor_id, self.actor_role, self.authorization_ref)):
                 raise InvalidEventError("decisions require checkpoint, decision, reviewer, and authorization fields")
-        if self.event_type in {"admission_blocked", "cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
+        if self.event_type in {"admission_blocked", "analysis_blocked", "analysis_inconclusive", "cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
             raise InvalidEventError(f"{self.event_type} requires a reason")
 
 
@@ -165,6 +165,8 @@ class RunState:
         "admission_blocked": {"requested": "blocked"},
         "analysis_started": {"admitted": "analyzing"},
         "analysis_completed": {"analyzing": "admitted"},
+        "analysis_blocked": {"analyzing": "blocked"},
+        "analysis_inconclusive": {"analyzing": "inconclusive"},
         "planning_completed": {"planning": "planning"},
         "generation_started": {"coding": "coding"},
         "generation_completed": {"coding": "coding"},
@@ -243,7 +245,9 @@ class RunState:
                 terminal_reason=(
                     None
                     if event.event_type == "retry_requested"
-                    else event.reason if event.event_type == "admission_blocked" else self.terminal_reason
+                    else event.reason
+                    if event.event_type in {"admission_blocked", "analysis_blocked", "analysis_inconclusive"}
+                    else self.terminal_reason
                 ),
                 **(
                     {

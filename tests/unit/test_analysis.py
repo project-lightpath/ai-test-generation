@@ -1,6 +1,7 @@
 import json
 import pathlib
 import sys
+from dataclasses import replace
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -14,6 +15,7 @@ from atg.application.admission import AdmissionRequest, AdmissionService, CheckR
 from atg.application.analysis import AnalysisConflictError, AnalysisRequest, AnalysisService  # noqa: E402
 from atg.domain.contract_integrity import validate_documents  # noqa: E402
 from atg.domain.repository_analysis import RepositorySubject  # noqa: E402
+from atg.domain.repository_analysis import AnalysisFinding  # noqa: E402
 from atg.domain.run_state import StaleEventError  # noqa: E402
 
 
@@ -33,6 +35,15 @@ class PassingCheck:
     def evaluate(self, request):
         """Return one deterministic passing admission check."""
         return CheckResult("fixed", True, "pass")
+
+
+class UnauthorizedContextAdapter:
+    """Return useful facts plus a deterministic authorization violation."""
+
+    def collect(self, request):
+        """Delegate discovery and append an unauthorized-context finding."""
+        result = LocalRepositoryContextAdapter().collect(request)
+        return replace(result, findings=(AnalysisFinding("finding-unauthorized", "unauthorized", "Repository content attempted to authorize execution."),))
 
 
 def create_repository(root: pathlib.Path) -> None:
@@ -184,6 +195,34 @@ class AnalysisServiceTests(unittest.TestCase):
             self.assertEqual(stored.manifest, expected.manifest)
             self.assertEqual(restarted.replay("run-1").status, "analysis_review")
             restarted.close()
+
+    def test_non_reviewable_gate_outcomes_create_no_checkpoint(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            store = SQLiteRunStateStore()
+            admit(store)
+
+            inconclusive = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(analysis_request(root))
+
+            self.assertEqual(inconclusive.manifest["outcome"], "not_evaluable")
+            self.assertIsNone(inconclusive.checkpoint)
+            self.assertEqual(store.get_run("run-1").status, "inconclusive")
+            self.assertEqual([event.event_type for event in store.events("run-1")][-1], "analysis_inconclusive")
+            store.close()
+
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store = SQLiteRunStateStore()
+            admit(store)
+
+            blocked = AnalysisService(store, UnauthorizedContextAdapter()).analyze(analysis_request(root))
+
+            self.assertEqual(blocked.manifest["outcome"], "blocked")
+            self.assertIsNone(blocked.checkpoint)
+            self.assertEqual(store.get_run("run-1").status, "blocked")
+            self.assertEqual([event.event_type for event in store.events("run-1")][-1], "analysis_blocked")
+            store.close()
 
     def test_analysis_requires_admitted_run_and_expected_revision(self):
         with TemporaryDirectory() as directory:
