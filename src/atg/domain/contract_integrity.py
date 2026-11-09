@@ -57,6 +57,18 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             require_run(document, "request.run_id")
             for objective_id in document.get("objective_ids", []):
                 require("atg.objective", objective_id, "request.objective_ids")
+        elif contract == "atg.analysis":
+            require_run(document, "analysis.run_id")
+            _require_related(document, "atg.request", document.get("request_id"), require, errors, "analysis.request_id")
+            for evidence_id in document.get("evidence_refs", []):
+                require("atg.evidence", evidence_id, "analysis.evidence_refs")
+            for objective_id in document.get("objective_refs", []):
+                require("atg.objective", objective_id, "analysis.objective_refs")
+            _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "analysis.provenance_ref")
+            for fact in document.get("fact_summary", []):
+                _require_evidence_refs(fact.get("evidence_refs", []), require, errors, "analysis.fact_summary.evidence_refs")
+            for finding in document.get("findings", []):
+                _require_evidence_refs(finding.get("evidence_refs", []), require, errors, "analysis.finding.evidence_refs")
         elif contract == "atg.run_admission":
             request = _require_related(document, "atg.request", document.get("request_id"), require, errors, "run_admission.request_id")
             if request is not None and request.get("run_id") != document.get("run_id"):
@@ -68,6 +80,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
         elif contract == "atg.objective":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "objective.evidence_refs")
         elif contract in {
+            "atg.analysis",
             "atg.checkpoint",
             "atg.feedback",
             "atg.generation",
@@ -91,6 +104,11 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 errors,
                 "feedback.checkpoint_id",
             )
+        if contract == "atg.checkpoint" and document.get("kind") == "analysis_review":
+            reviewed = document.get("reviewed_artifact") or {}
+            analyses = [candidate for candidate in docs if candidate.get("contract") == "atg.analysis" and candidate.get("run_id") == document.get("run_id")]
+            if not any(reviewed.get("artifact_id") in candidate.get("artifact_refs", []) for candidate in analyses):
+                errors.append("analysis_review checkpoint artifact is not referenced by an analysis manifest")
         if contract == "atg.run_terminal":
             request = _require_related(
                 document, "atg.request", document.get("request_id"), require, errors,

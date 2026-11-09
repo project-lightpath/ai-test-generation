@@ -28,7 +28,8 @@
         "rationale": { "type": "string" }
       }
     },
-    "supersedes": { "$ref": "common.schema.json#/$defs/id" }
+    "supersedes": { "$ref": "common.schema.json#/$defs/id" },
+    "reviewed_artifact": { "$ref": "common.schema.json#/$defs/artifact" }
   },
   "allOf": [
     {
@@ -50,6 +51,10 @@
     {
       "if": { "properties": { "state": { "const": "expired" } } },
       "then": { "required": ["expires_at"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "analysis_review" } } },
+      "then": { "required": ["reviewed_artifact"] }
     }
   ]
 }

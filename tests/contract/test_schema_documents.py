@@ -14,6 +14,7 @@ from atg.domain.run_state import RunEvent, RunState  # noqa: E402
 CONTRACTS = pathlib.Path(__file__).parents[2] / "contracts" / "v1"
 EXPECTED = {
     "request",
+    "analysis",
     "evidence",
     "objective",
     "plan",
@@ -59,6 +60,7 @@ class ContractSchemaTests(unittest.TestCase):
     def test_representative_examples_validate_against_real_schemas(self):
         examples = {
             "request.json": "request",
+            "analysis.json": "analysis",
             "evidence.json": "evidence",
             "objective.json": "objective",
             "plan.json": "plan",
@@ -156,6 +158,13 @@ class ContractSchemaTests(unittest.TestCase):
     def test_checkpoint_state_and_decision_must_agree(self):
         checkpoint = self._load("examples", "checkpoint.json")
         checkpoint["decision"]["value"] = "rejected"
+        with self.assertRaises(ValidationError):
+            self._validator("checkpoint").validate(checkpoint)
+
+    def test_analysis_review_checkpoint_requires_reviewed_artifact(self):
+        checkpoint = self._load("examples", "checkpoint.json")
+        checkpoint["kind"] = "analysis_review"
+        checkpoint.pop("reviewed_artifact")
         with self.assertRaises(ValidationError):
             self._validator("checkpoint").validate(checkpoint)
 

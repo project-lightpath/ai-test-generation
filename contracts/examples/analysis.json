@@ -1,0 +1,36 @@
+{
+  "contract": "atg.analysis",
+  "version": "1.0",
+  "analysis_id": "analysis-001",
+  "run_id": "run-001",
+  "request_id": "request-001",
+  "revision": 1,
+  "analyzed_at": "2026-11-03T17:04:00Z",
+  "subject": {"kind": "git-repository", "id": "https://git.example/app.git", "version": "abc123"},
+  "profile_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "outcome": "needs_human_review",
+  "evidence_refs": ["evidence-001"],
+  "objective_refs": ["objective-001"],
+  "provenance_ref": "provenance-001",
+  "artifact_refs": ["artifact-analysis-001"],
+  "fact_summary": [
+    {
+      "fact_id": "fact-source-root",
+      "origin": "discovered",
+      "claim": "src/main contains production Java sources",
+      "evidence_refs": ["evidence-001"]
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "finding-coverage-missing",
+      "kind": "incomplete",
+      "description": "Runtime coverage evidence was not available for the analyzed revision.",
+      "evidence_refs": ["evidence-001"],
+      "resolution": "Collect execution-produced coverage before making coverage claims."
+    }
+  ],
+  "assumptions": ["The supplied repository revision is the intended analysis subject."],
+  "gaps": ["Dynamic proxy reachability remains unresolved."],
+  "limitations": []
+}

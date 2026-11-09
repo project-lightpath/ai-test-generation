@@ -80,9 +80,20 @@ class ContractIntegrityTests(unittest.TestCase):
             "run-state.json", "request.json", "evidence.json", "objective.json", "plan.json",
             "checkpoint.json", "feedback.json", "preflight.json", "generation.json",
             "execution-base.json", "execution.json", "quality.json", "provenance.json",
-            "signed-differential.json",
+            "signed-differential.json", "analysis.json",
         ]
-        validate_documents([json.loads((root / filename).read_text()) for filename in filenames])
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        validate_documents(documents)
+
+    def test_analysis_requires_same_run_request_and_provenance(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        filenames = ["request.json", "evidence.json", "objective.json", "provenance.json", "analysis.json"]
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        analysis = next(document for document in documents if document.get("contract") == "atg.analysis")
+        analysis["run_id"] = "run-other"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("analysis.request_id belongs to a different run", raised.exception.errors)
 
     def test_complete_evidence_graph_is_consistent(self):
         validate_documents(graph_documents())
