@@ -183,8 +183,20 @@ class AnalysisService:
                 continue
             context = replace(
                 context,
-                facts=(*context.facts, *result.facts),
-                findings=(*context.findings, *result.findings),
+                facts=(*context.facts, *(fact for fact in result.facts if fact.evidence_refs)),
+                findings=(
+                    *context.findings,
+                    *result.findings,
+                    *(
+                        AnalysisFinding(
+                            f"finding-analyzer-fact-{index}-{fact.fact_id}",
+                            "incomplete",
+                            f"Analyzer fact {fact.fact_id} did not include attributable evidence references.",
+                        )
+                        for fact in result.facts
+                        if not fact.evidence_refs
+                    ),
+                ),
                 capabilities=(*context.capabilities, *result.capabilities),
             )
             analyzer_evidence.extend(result.evidence)
@@ -235,16 +247,51 @@ def _build_record(
         for fact in context.facts
         if not fact.evidence_refs
     }
+    normalized_facts = tuple(
+        replace(
+            fact,
+            evidence_refs=fact.evidence_refs or (str(generated_fact_evidence[fact.fact_id]["evidence_id"]),),
+        )
+        for fact in context.facts
+    )
+    context = replace(context, facts=normalized_facts)
     evidence = _unique_documents(
         (*request.supplied_evidence, *analyzer_evidence, *generated_fact_evidence.values()),
         "evidence_id",
         "evidence",
     )
     objectives = _unique_documents(request.supplied_objectives, "objective_id", "objective")
+    if request.objective_refs and not request.supplied_objectives:
+        context = replace(
+            context,
+            findings=(
+                *context.findings,
+                *(
+                    AnalysisFinding(
+                        f"finding-objective-reference-{objective_ref}",
+                        "missing",
+                        f"Referenced objective {objective_ref} was not supplied as a materialized objective document.",
+                    )
+                    for objective_ref in request.objective_refs
+                ),
+            ),
+        )
+    elif not request.supplied_objectives:
+        context = replace(
+            context,
+            findings=(
+                *context.findings,
+                AnalysisFinding(
+                    "finding-objective-source",
+                    "incomplete",
+                    "No behavior-bearing objective source was supplied; discovered repository metadata is not a test objective.",
+                ),
+            ),
+        )
     derivation = derive_objective_candidates(objectives, context)
     context = replace(context, findings=(*context.findings, *derivation.findings))
     evidence_by_fact = {
-        fact.fact_id: tuple(fact.evidence_refs) or (str(generated_fact_evidence[fact.fact_id]["evidence_id"]),)
+        fact.fact_id: tuple(fact.evidence_refs)
         for fact in context.facts
     }
     profile_artifact = _content_artifact(
@@ -326,7 +373,13 @@ def _build_record(
         "gaps": [finding.description for finding in context.findings],
         "limitations": [],
     }
-    gate = evaluate_analysis(request.subject, manifest, evidence, context, objectives if objectives else None)
+    gate = evaluate_analysis(
+        request.subject,
+        manifest,
+        evidence,
+        context,
+        objectives if objectives or request.objective_refs else None,
+    )
     manifest["outcome"] = gate.outcome
     manifest["findings"] = [
         {

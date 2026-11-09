@@ -72,7 +72,7 @@ def analysis_request(
     *,
     revision="abc123",
     expected_revision=1,
-    objective_refs=("objective-1",),
+    objective_refs=(),
     supplied_evidence=(),
     supplied_objectives=(),
     requested_capabilities=(),
@@ -162,7 +162,7 @@ class AnalysisServiceTests(unittest.TestCase):
             ])
             self.assertFalse(record.duplicate)
             self.assertEqual(record.manifest["outcome"], "needs_human_review")
-            self.assertEqual(record.manifest["objective_refs"], ["objective-1"])
+            self.assertEqual(record.manifest["objective_refs"], [])
             self.assertEqual(record.checkpoint["reviewed_artifact"]["artifact_id"], "artifact-analysis-1")
             self.assertEqual(store.get_run("run-1").status, "analysis_review")
             self.assertEqual(store.get_run("run-1").revision, 4)
@@ -323,6 +323,40 @@ class AnalysisServiceTests(unittest.TestCase):
             )
             self.assertEqual(first.digest(), second.digest())
 
+    def test_analyze_without_seed_objectives_records_objective_source_gap(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store = SQLiteRunStateStore()
+            admit(store)
+            request = analysis_request(root, objective_refs=(), supplied_objectives=())
+
+            record = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(request)
+
+            self.assertEqual(record.objectives, ())
+            self.assertEqual(record.manifest["objective_candidates"], [])
+            self.assertTrue(any("No behavior-bearing objective source" in gap for gap in record.manifest["gaps"]))
+            self.assertEqual(record.manifest["outcome"], "needs_human_review")
+            self.assertIsNotNone(record.checkpoint)
+            store.close()
+
+    def test_referenced_objective_without_document_blocks_review(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store = SQLiteRunStateStore()
+            admit(store)
+
+            record = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(
+                analysis_request(root, objective_refs=("objective-missing",), supplied_objectives=())
+            )
+
+            self.assertEqual(record.manifest["outcome"], "blocked")
+            self.assertIsNone(record.checkpoint)
+            self.assertTrue(any("objective-missing" in gap for gap in record.manifest["gaps"]))
+            self.assertEqual(store.get_run("run-1").status, "blocked")
+            store.close()
+
     def test_replay_analyzers_merge_evidence_capabilities_and_raw_artifacts(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -334,6 +368,7 @@ class AnalysisServiceTests(unittest.TestCase):
             admit(store)
             request = analysis_request(
                 root,
+                objective_refs=(),
                 requested_capabilities=("repository-preparation", "java-semantic-calls"),
             )
 

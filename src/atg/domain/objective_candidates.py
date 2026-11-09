@@ -117,6 +117,8 @@ def derive_objective_candidates(
             ))
         elif duplicate_of is not None:
             disposition = "duplicate_candidate"
+        elif document.get("gaps") and document.get("driver_type") == "test_gap":
+            disposition = "stated_gap"
         else:
             seen[key] = f"candidate-{objective_id}"
 
