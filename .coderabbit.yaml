@@ -21,7 +21,12 @@ reviews:
     - path: "**"
       instructions: |
         Review the complete change set in repository context, including
-        cross-file contract, persistence, workflow, and test behavior. Preserve
+        cross-file contract, persistence, workflow, and test behavior, but
+        prioritize findings on lines changed by the current push and behavior
+        directly affected by those lines. Do not repeat a finding that applies
+        only to unchanged code unless the current change reintroduces or
+        worsens it. Treat unchanged-code observations as informational rather
+        than fix requests, and state when a finding is pre-existing. Preserve
         these ATG invariants: decided checkpoint state and decision value must
         agree; positive quality and differential outcomes require supporting
         evidence; event contract and version metadata must be validated at
@@ -40,7 +45,8 @@ reviews:
         Review JSON Schema Draft 2020-12 correctness, stable $id and $ref
         behavior, required fields, additionalProperties, discriminators,
         explicit blocked/inconclusive/not_reached/stated_gap outcomes, and
-        compatibility implications. Do not infer success from missing
+        compatibility implications for changed schemas and directly affected
+        consumers. Do not infer success from missing
         evidence. Preserve source, artifact, command, environment, model,
         worker, tool, reviewer, and authorization identities where evidence
         depends on them.
@@ -63,8 +69,9 @@ reviews:
         Review run-state transitions, revision compare-and-swap semantics,
         event-id/payload-digest idempotency, checkpoint supersession and
         expiry, retry/recovery behavior, terminal outcomes, and cross-document
-        integrity. Look for invalid transitions that can be accepted or valid
-        evidence states that can be skipped. Parse timestamps semantically with
+        integrity in changed code and affected transitions. Look for invalid
+        transitions that can be accepted or valid evidence states that can be
+        skipped. Parse timestamps semantically with
         timezone-aware values. Clear active checkpoint identifiers and deadlines
         on terminal and retry transitions. Ensure serialized state omits invalid
         null fields and validates against its JSON Schema.
@@ -72,14 +79,16 @@ reviews:
       instructions: |
         Review transaction boundaries, persistence/replay correctness,
         concurrency safety, resource lifecycle, untrusted input handling, and
-        whether development adapters accidentally become production contracts.
+        whether development adapters accidentally become production contracts
+        in changed adapters and affected call paths.
         Replay must read journal and snapshot data consistently and detect full
         projection divergence, not only revision/status differences.
     - path: "src/atg/component/**/*.py"
       instructions: |
         Review HTTP status and error semantics, input validation, process
         lifecycle, concurrency behavior, and whether the component exposes the
-        same observable contract as the service boundary. Validate contract and
+        same observable contract as the service boundary for changed behavior.
+        Validate contract and
         version discriminators before constructing events. Map malformed JSON,
         malformed events, unknown runs, stale events, and oversized bodies to
         stable status codes and exact structured error objects.
@@ -88,8 +97,9 @@ reviews:
         Check meaningful assertions rather than existence-only or tautological
         checks. Require success, negative, boundary, stale, duplicate,
         concurrency, persistence/replay, and recovery coverage where relevant.
-        Flag discarded return values, conditional no-op assertions, and tests
-        that do not verify the claimed behavior. Prefer exact object/response
+        For tests changed by the current push, flag discarded return values,
+        conditional no-op assertions, and tests that do not verify the claimed
+        behavior. Prefer exact object/response
         assertions over substring matching. Validate serialized outputs against
         schemas and make override tests prove that replacement differs from the
         base schema.

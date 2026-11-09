@@ -450,6 +450,7 @@ class RunState:
         )
 
     def _replace(self, event: RunEvent, **changes: object) -> "RunState":
+        """Return the next immutable state projection for an accepted event."""
         return RunState(
             run_id=self.run_id,
             status=str(changes.get("status", self.status)),

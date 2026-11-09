@@ -11,8 +11,9 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore  # noqa: E402
+from atg.application.admission import AdmissionRequest, AdmissionResult, CheckResult  # noqa: E402
 from atg.component.run_state_server import MAX_REQUEST_BYTES, create_server  # noqa: E402
-from atg.domain.run_state import DuplicateEventError, RunEvent, StaleEventError  # noqa: E402
+from atg.domain.run_state import DuplicateEventError, InvalidTransitionError, RunEvent, StaleEventError  # noqa: E402
 
 
 def admit_event(run_id="run-1", event_id="event-1", revision=0):
@@ -25,6 +26,20 @@ def admit_event(run_id="run-1", event_id="event-1", revision=0):
     )
 
 
+def record_admission(store, event):
+    """Record the admission required before applying a persisted admit event."""
+    result = AdmissionResult(
+        admission_id=f"admission-{event.run_id}",
+        request_id=f"request-{event.run_id}",
+        run_id=event.run_id,
+        evaluated_at=event.occurred_at,
+        checks=(CheckResult(name="contract", required_check=True, status="pass"),),
+        status="admitted",
+        request_digest=f"digest-{event.run_id}",
+    )
+    return store.record_admission(f"key-{event.run_id}", result.request_digest, result, event)
+
+
 class SQLiteRunStateComponentTests(unittest.TestCase):
     def test_restart_replays_journal_and_preserves_duplicate_protection(self):
         with TemporaryDirectory() as directory:
@@ -32,7 +47,7 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
             first = SQLiteRunStateStore(database)
             first.create_run("run-1", "2026-11-03T17:00:00Z")
             event = admit_event()
-            first.apply(event)
+            record_admission(first, event)
             first.close()
 
             second = SQLiteRunStateStore(database)
@@ -54,7 +69,7 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
             database = str(pathlib.Path(directory) / "run-state.sqlite3")
             store = SQLiteRunStateStore(database)
             store.create_run("run-1", "2026-11-03T17:00:00Z")
-            store.apply(admit_event())
+            record_admission(store, admit_event())
             store.apply(
                 RunEvent(
                     event_id="event-checkpoint",
@@ -130,12 +145,19 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
             second = SQLiteRunStateStore(database)
             first.create_run("run-1", "2026-11-03T17:00:00Z")
             second.create_run("run-1", "2026-11-03T17:00:00Z")
-            first.apply(admit_event())
+            record_admission(first, admit_event())
             with self.assertRaises(StaleEventError):
                 second.apply(admit_event(event_id="event-stale", revision=0))
             self.assertTrue(second.apply(admit_event()).duplicate)
             first.close()
             second.close()
+
+    def test_direct_admission_event_requires_recorded_result(self):
+        store = SQLiteRunStateStore()
+        store.create_run("run-1", "2026-11-03T17:00:00Z")
+        with self.assertRaises(InvalidTransitionError):
+            store.apply(admit_event())
+        store.close()
 
 
 class RunStateHTTPComponentTests(unittest.TestCase):
@@ -164,6 +186,16 @@ class RunStateHTTPComponentTests(unittest.TestCase):
         with urlopen(request) as response:
             return response.status, json.loads(response.read())
 
+    def record_http_admission(self, run_id="run-http"):
+        """Create the durable admission required by the event endpoint."""
+        return self.server.admission_service.admit(AdmissionRequest(
+            request_id=f"request-{run_id}",
+            run_id=run_id,
+            submitted_at="2026-11-03T17:00:00Z",
+            idempotency_key=f"key-{run_id}",
+            payload={"request_id": f"request-{run_id}", "run_id": run_id},
+        ))
+
     def test_process_boundary_creates_applies_and_reads_run_state(self):
         status, state = self.request(
             "POST",
@@ -175,6 +207,7 @@ class RunStateHTTPComponentTests(unittest.TestCase):
         self.assertEqual(state["revision"], 0)
         self.assertEqual(state["updated_at"], "2026-11-03T17:00:00Z")
         self.assertEqual(state["status"], "requested")
+        self.record_http_admission()
         event = admit_event(run_id="run-http")
         event_payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
         status, applied = self.request("POST", "/runs/run-http/events", event_payload)
@@ -201,6 +234,7 @@ class RunStateHTTPComponentTests(unittest.TestCase):
 
     def test_process_boundary_returns_conflict_for_stale_event(self):
         self.request("POST", "/runs", {"run_id": "run-http", "created_at": "2026-11-03T17:00:00Z"})
+        self.record_http_admission()
         event = admit_event(run_id="run-http")
         event_payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
         self.request("POST", "/runs/run-http/events", event_payload)

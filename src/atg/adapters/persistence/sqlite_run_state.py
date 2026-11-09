@@ -17,6 +17,7 @@ from typing import Iterator
 from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
 from atg.domain.run_state import (
     DuplicateEventError,
+    InvalidTransitionError,
     RunEvent,
     RunState,
     StaleEventError,
@@ -133,7 +134,7 @@ class SQLiteRunStateStore:
                     "INSERT OR IGNORE INTO runs(run_id, revision, state_json) VALUES (?, ?, ?)",
                     (event.run_id, 0, json.dumps(RunState(run_id=event.run_id, updated_at=event.occurred_at).to_document(), sort_keys=True)),
                 )
-                self._apply_locked(event)
+                self._apply_locked(event, allow_unrecorded_admission=True)
                 self._connection.execute(
                     "INSERT INTO admissions(idempotency_key, request_digest, result_json, terminal_json) VALUES (?, ?, ?, ?)",
                     (
@@ -184,7 +185,7 @@ class SQLiteRunStateStore:
                 self._connection.execute("ROLLBACK")
                 raise
 
-    def _apply_locked(self, event: RunEvent) -> TransitionResult:
+    def _apply_locked(self, event: RunEvent, *, allow_unrecorded_admission: bool = False) -> TransitionResult:
         payload = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
         digest = event_fingerprint(event)
         existing = self._connection.execute(
@@ -197,6 +198,13 @@ class SQLiteRunStateStore:
             return TransitionResult(self.get_run(event.run_id), duplicate=True)
 
         state = self.get_run(event.run_id)
+        if event.event_type == "admit" and not allow_unrecorded_admission:
+            recorded = self._connection.execute(
+                "SELECT 1 FROM admissions WHERE json_extract(result_json, '$.run_id') = ?",
+                (event.run_id,),
+            ).fetchone()
+            if recorded is None:
+                raise InvalidTransitionError("admission event requires a recorded admission result")
         if event.expected_revision != state.revision:
             raise StaleEventError(
                 f"event expects revision {event.expected_revision}, current revision is {state.revision}"
@@ -267,6 +275,7 @@ class SQLiteRunStateStore:
 
 
 def _admission_from_document(document: dict) -> AdmissionResult:
+    """Reconstruct an admission result from its persisted document."""
     return AdmissionResult(
         admission_id=document["admission_id"],
         request_id=document["request_id"],

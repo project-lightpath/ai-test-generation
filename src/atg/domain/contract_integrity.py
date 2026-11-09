@@ -175,6 +175,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
 
 
 def _document_id(document: Mapping[str, object]) -> str | None:
+    """Return the contract-specific identifier from a document."""
     contract_fields = {
         "atg.request": "request_id",
         "atg.evidence": "evidence_id",
@@ -225,11 +226,13 @@ def _document_id(document: Mapping[str, object]) -> str | None:
 
 
 def _require_evidence_refs(refs, require, errors: list[str], relation: str) -> None:
+    """Require every evidence reference in a document relationship."""
     for evidence_id in refs:
         require("atg.evidence", evidence_id, relation)
 
 
 def _require_related(document, contract, identifier, require, errors, relation):
+    """Resolve a related document and verify that it belongs to the same run."""
     related = require(contract, identifier, relation)
     if related is not None and document.get("run_id") != related.get("run_id"):
         errors.append(f"{relation} belongs to a different run")

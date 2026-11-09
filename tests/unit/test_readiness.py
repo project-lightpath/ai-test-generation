@@ -41,6 +41,10 @@ class FixedReadinessCheck:
 
 
 class ReadinessTests(unittest.TestCase):
+    def test_empty_checks_are_rejected(self):
+        with self.assertRaises(ValueError):
+            PlatformReadinessService(())
+
     def test_readiness_ids_are_unique(self):
         service = PlatformReadinessService((FixedReadinessCheck("pass", "tekton"),))
         self.assertNotEqual(service.evaluate().readiness_id, service.evaluate().readiness_id)

@@ -59,6 +59,8 @@ class PlatformReadinessService:
     def __init__(self, checks, service_id="atg-local", service_version="dev", limitations=()):
         """Create a readiness service with deterministic check adapters."""
         self._checks = tuple(checks)
+        if not self._checks:
+            raise ValueError("platform readiness requires at least one check")
         self._service_id = service_id
         self._service_version = service_version
         self._limitations = tuple(limitations)
