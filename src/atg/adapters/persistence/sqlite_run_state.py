@@ -186,6 +186,7 @@ class SQLiteRunStateStore:
                 raise
 
     def _apply_locked(self, event: RunEvent, *, allow_unrecorded_admission: bool = False) -> TransitionResult:
+        """Apply an event while the caller owns the active SQLite transaction."""
         payload = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
         digest = event_fingerprint(event)
         existing = self._connection.execute(
