@@ -224,7 +224,7 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             run_id="run-http",
             event_type="analysis_started",
             expected_revision=1,
-            occurred_at="2026-11-09T17:00:01Z",
+            occurred_at="2099-11-09T17:00:01Z",
         )
         event_payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
         status, applied = self.request("POST", "/runs/run-http/events", event_payload)
@@ -257,7 +257,7 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             run_id="run-http",
             event_type="analysis_started",
             expected_revision=1,
-            occurred_at="2026-11-09T17:00:01Z",
+            occurred_at="2099-11-09T17:00:01Z",
         )
         event_payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
         self.request("POST", "/runs/run-http/events", event_payload)

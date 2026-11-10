@@ -3,6 +3,4 @@ __pycache__/
 .venv/
 *.sqlite3
 PR-SUMMARY-*.md
-.kilo/kilo.json
-.kilo/kilo.jsonc
-.kilo/local-context.md
+.kilo/**
