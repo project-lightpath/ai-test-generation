@@ -24,6 +24,9 @@ EXPECTED = {
     "quality",
     "provenance",
     "preflight",
+    "platform-readiness",
+    "run-admission",
+    "run-terminal",
     "compatibility",
     "signed-differential",
     "run-state",
@@ -69,6 +72,9 @@ class ContractSchemaTests(unittest.TestCase):
             "quality.json": "quality",
             "provenance.json": "provenance",
             "preflight.json": "preflight",
+            "platform-readiness.json": "platform-readiness",
+            "run-admission.json": "run-admission",
+            "run-terminal-blocked.json": "run-terminal",
             "signed-differential.json": "signed-differential",
         }
         for filename, schema_name in examples.items():
@@ -97,6 +103,31 @@ class ContractSchemaTests(unittest.TestCase):
             self._validator("preflight").validate(
                 self._load("invalid", "preflight-ready-required-check-failed.json")
             )
+
+    def test_blocked_terminal_requires_a_failed_required_check(self):
+        terminal = self._load("examples", "run-terminal-blocked.json")
+        for checks in (None, [], [{"name": "optional", "required_check": False, "status": "fail"}]):
+            with self.subTest(checks=checks):
+                document = copy.deepcopy(terminal)
+                if checks is None:
+                    document.pop("checks")
+                else:
+                    document["checks"] = checks
+                with self.assertRaises(ValidationError):
+                    self._validator("run-terminal").validate(document)
+
+    def test_blocked_admission_and_readiness_require_a_failed_required_check(self):
+        admission = self._load("examples", "run-admission.json")
+        admission["checks"] = [{"name": "passing", "required_check": True, "status": "pass"}]
+        with self.assertRaises(ValidationError):
+            self._validator("run-admission").validate(admission)
+
+        readiness = self._load("examples", "platform-readiness.json")
+        readiness["status"] = "blocked"
+        for check in readiness["checks"]:
+            check["status"] = "pass"
+        with self.assertRaises(ValidationError):
+            self._validator("platform-readiness").validate(readiness)
 
     def test_not_evaluable_rejected_preflight_cannot_bypass_blocked_state(self):
         with self.assertRaises(ValidationError):

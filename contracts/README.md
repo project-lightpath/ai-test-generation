@@ -12,7 +12,7 @@ in `v1/common.schema.json`.
 
 The lifecycle is represented by:
 
-- `request`, `preflight`, `objective`, `plan`, and `checkpoint` for admission and review.
+- `request`, `platform-readiness`, `run-admission`, `preflight`, `objective`, `plan`, and `checkpoint` for stage-zero admission and review. Platform readiness is service-level; run admission is request-level.
 - `feedback`, `generation`, `execution`, and `quality` for Analyze -> Plan -> Code -> Execute.
 - `provenance` and `signed-differential` for reproducible, owner-reviewable evidence.
 - `run-state` and `run-event` for durable, idempotent workflow state transitions.
@@ -45,6 +45,7 @@ inventing those upstream schemas.
 - Do not place credentials, customer data, or unapproved authoritative VEX documents in fixtures.
 - Treat `blocked`, `inconclusive`, `not_reached`, and `stated_gap` as explicit outcomes; never infer a pass from missing evidence.
 - A preflight with a failed or unrun required check is `blocked`, not `ready` or `admitted`.
+- HTTP admission retries use the `Idempotency-Key` header; transport retry metadata is not part of the canonical `atg.request` document.
 - Treat model output, repository content, generated code, and execution logs as untrusted data.
 
 ## Integration

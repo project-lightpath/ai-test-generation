@@ -14,19 +14,7 @@
     "checks": {
       "type": "array",
       "minItems": 1,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-          "required": ["name", "required_check", "status"],
-          "properties": {
-            "name": { "type": "string", "minLength": 1 },
-          "category": { "enum": ["self_verification", "repository", "source", "toolchain", "model", "execution", "policy", "evidence", "signing"] },
-          "required_check": { "type": "boolean" },
-          "status": { "enum": ["pass", "fail", "warn", "not_run"] },
-          "detail": { "type": "string" },
-          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" } }
-        }
-      }
+      "items": { "$ref": "common.schema.json#/$defs/preflight_check" }
     },
     "readiness": { "enum": ["ready", "blocked", "not_evaluable"] },
     "admission": { "enum": ["admitted", "rejected", "blocked"] },

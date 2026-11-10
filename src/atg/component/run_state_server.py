@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from atg.adapters.failure_register import FailureRegisterCheck
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
+from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
+from atg.application.readiness import PlatformReadinessService
 from atg.domain.run_state import (
     InvalidEventError,
     RunEvent,
@@ -22,6 +27,14 @@ from atg.domain.run_state import (
 )
 
 MAX_REQUEST_BYTES = 1024 * 1024
+REQUEST_FIELDS = frozenset({
+    "contract", "version", "request_id", "run_id", "submitted_at", "source", "repository",
+    "policy_decision", "objective_ids", "requested_by", "mode", "constraints",
+    "requested_capabilities", "tenant_id", "authorization_ref", "environment",
+})
+IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
+SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
+DIGEST_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$")
 
 
 class BadRequestError(ValueError):
@@ -32,26 +45,85 @@ class RequestTooLargeError(ValueError):
     """Raised when an HTTP request exceeds the component limit."""
 
 
-def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int = 0):
+def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int = 0, capabilities=()):
+    """Create the local HTTP development component."""
     store = SQLiteRunStateStore(database)
+
+    class CapabilityCheck:
+        def evaluate(self, request):
+            """Check that every requested capability is locally available."""
+            missing = sorted(set(request.requested_capabilities) - set(capabilities))
+            return CheckResult(
+                name="requested-capabilities",
+                category="policy",
+                required_check=True,
+                status="fail" if missing else "pass",
+                detail=f"Unsupported capabilities: {', '.join(missing)}" if missing else "Requested capabilities are supported.",
+            )
+
+    class IdentityCheck:
+        def evaluate(self, request):
+            """Check that tenant and authorization identities are present."""
+            missing = [name for name in ("tenant_id", "authorization_ref") if not getattr(request, name)]
+            return CheckResult(
+                name="request-identity",
+                category="policy",
+                required_check=True,
+                status="fail" if missing else "pass",
+                detail=f"Missing identities: {', '.join(missing)}" if missing else "Tenant and authorization identities are present.",
+            )
+
+    class ContractCheck:
+        name = "contract-registry"
+        required = True
+
+        def evaluate(self, request):
+            """Verify that the versioned contract files are present and parseable."""
+            contracts = Path(__file__).parents[3] / "contracts" / "v1"
+            try:
+                paths = tuple(contracts.glob("*.schema.json"))
+                if not paths:
+                    raise ValueError("no contract schemas found")
+                for path in paths:
+                    json.loads(path.read_text())
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                return CheckResult(
+                    name=self.name, category="self_verification", required_check=True,
+                    status="not_run", detail=f"contract verification unavailable: {exc}",
+                )
+            return CheckResult(
+                name="contract-registry", category="self_verification", required_check=True,
+                status="pass", detail="ATG v1 contracts are loaded.",
+            )
+
+    failure_register = FailureRegisterCheck(
+        Path(__file__).parents[3] / "contracts" / "failure-register" / "v1" / "cases.json"
+    )
+    readiness_service = PlatformReadinessService((ContractCheck(), failure_register))
+    admission_service = AdmissionService(store, (CapabilityCheck(), IdentityCheck()), readiness=readiness_service)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
+            """Suppress access logging in the development component."""
             return
 
         def do_GET(self):  # noqa: N802
+            """Serve readiness, run state, and event journal documents."""
             parts = self._parts()
             try:
                 if len(parts) == 2 and parts[0] == "runs":
                     self._respond(200, store.get_run(parts[1]).to_document())
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
+                elif parts == ["readiness"]:
+                    self._respond(200, readiness_service.evaluate().to_document())
                 else:
                     self._respond(404, {"error": "not found"})
             except KeyError:
                 self._respond(404, {"error": "run not found"})
 
         def do_POST(self):  # noqa: N802
+            """Accept run, event, and admission requests."""
             parts = self._parts()
             try:
                 body = self._body()
@@ -70,6 +142,95 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                         raise BadRequestError(str(exc)) from exc
                     state = store.create_run(body["run_id"], body["created_at"])
                     self._respond(201, state.to_document())
+                    return
+                if parts == ["admissions"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("admission body must be a JSON object")
+                    if body.get("contract") != "atg.request" or body.get("version") != "1.0":
+                        raise BadRequestError("admission requires atg.request version 1.0")
+                    unknown = sorted(set(body) - REQUEST_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported request fields: {', '.join(unknown)}")
+                    idempotency_key = self.headers.get("Idempotency-Key")
+                    if not idempotency_key:
+                        raise BadRequestError("admission requires Idempotency-Key header")
+                    required = ("request_id", "run_id", "submitted_at", "requested_by", "tenant_id", "authorization_ref")
+                    if any(not isinstance(body.get(field), str) or not body[field] for field in required):
+                        raise BadRequestError("admission requires request, requester, tenant, and authorization identities")
+                    for field in ("request_id", "run_id", "requested_by", "tenant_id", "authorization_ref"):
+                        try:
+                            validate_identifier(body[field], field)
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_identifier(idempotency_key, "Idempotency-Key")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body["submitted_at"], "submitted_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    requested = body.get("requested_capabilities", [])
+                    if not isinstance(requested, list) or not all(isinstance(value, str) for value in requested):
+                        raise BadRequestError("requested_capabilities must be a list of strings")
+                    if len(requested) != len(set(requested)):
+                        raise BadRequestError("requested_capabilities must contain unique identifiers")
+                    for capability in requested:
+                        try:
+                            validate_identifier(capability, "requested_capability")
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body.get("source"), dict) or not isinstance(body.get("repository"), dict):
+                        raise BadRequestError("source and repository must be objects")
+                    unknown_source = sorted(set(body["source"]) - SOURCE_FIELDS)
+                    if unknown_source:
+                        raise BadRequestError(f"source has unsupported fields: {', '.join(unknown_source)}")
+                    _validate_identity(body.get("source", {}).get("identity"), "source.identity")
+                    if not isinstance(body.get("source", {}).get("locator"), str) or not body["source"]["locator"]:
+                        raise BadRequestError("source.locator must be a non-empty string")
+                    if "retrieved_at" in body["source"]:
+                        try:
+                            validate_timestamp(body["source"]["retrieved_at"], "source.retrieved_at")
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    if "content_digest" in body["source"]:
+                        _validate_digest(body["source"]["content_digest"], "source.content_digest")
+                    _validate_identity(body["repository"], "repository")
+                    for field in ("policy_decision", "environment"):
+                        if field in body:
+                            _validate_identity(body[field], field)
+                    if not isinstance(body.get("objective_ids"), list) or not body["objective_ids"] or not all(isinstance(value, str) for value in body["objective_ids"]):
+                        raise BadRequestError("objective_ids must be a non-empty list of strings")
+                    if len(body["objective_ids"]) != len(set(body["objective_ids"])):
+                        raise BadRequestError("objective_ids must contain unique identifiers")
+                    for objective_id in body["objective_ids"]:
+                        try:
+                            validate_identifier(objective_id, "objective_id")
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    if "mode" in body and (
+                        not isinstance(body["mode"], str) or body["mode"] not in {"analyze", "full"}
+                    ):
+                        raise BadRequestError("mode must be analyze or full")
+                    if "constraints" in body and (
+                        not isinstance(body["constraints"], list)
+                        or not all(isinstance(value, str) for value in body["constraints"])
+                    ):
+                        raise BadRequestError("constraints must be a list of strings")
+                    request = AdmissionRequest(
+                        request_id=body["request_id"],
+                        run_id=body["run_id"],
+                        submitted_at=body["submitted_at"],
+                        idempotency_key=idempotency_key,
+                        requested_capabilities=tuple(requested),
+                        tenant_id=body.get("tenant_id"),
+                        authorization_ref=body.get("authorization_ref"),
+                        payload=body,
+                    )
+                    existing = store.get_admission(request.idempotency_key)
+                    result = admission_service.admit(request)
+                    created = existing is None and store.get_admission(request.idempotency_key) is not None
+                    self._respond(201 if created else 200, result.to_document())
                     return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
@@ -104,11 +265,15 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
                 self._respond(400, {"error": str(exc)})
             except RunStateError as exc:
                 self._respond(409, {"error": str(exc)})
+            except AdmissionConflictError as exc:
+                self._respond(409, {"error": str(exc)})
 
         def _parts(self):
+            """Return decoded non-empty URL path components."""
             return [unquote(part) for part in urlsplit(self.path).path.strip("/").split("/") if part]
 
         def _body(self):
+            """Read and decode a bounded JSON request body."""
             raw_length = self.headers.get("Content-Length")
             try:
                 length = int(raw_length) if raw_length is not None else 0
@@ -125,6 +290,7 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
             return body
 
         def _respond(self, status, payload):
+            """Write a JSON response with an explicit content length."""
             encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
@@ -134,10 +300,13 @@ def create_server(database: str = ":memory:", host: str = "127.0.0.1", port: int
 
     server = ThreadingHTTPServer((host, port), Handler)
     server.store = store
+    server.admission_service = admission_service
+    server.readiness_service = readiness_service
     return server
 
 
 def _event_document(event: RunEvent) -> dict:
+    """Serialize a run event with its public contract envelope."""
     document = {
         "contract": "atg.run_event",
         "version": "1.0",
@@ -146,7 +315,33 @@ def _event_document(event: RunEvent) -> dict:
     return document
 
 
+def _validate_identity(value, field_name: str) -> None:
+    """Validate the required shape of an identity object."""
+    if not isinstance(value, dict):
+        raise BadRequestError(f"{field_name} must be an identity object")
+    unknown = sorted(set(value) - IDENTITY_FIELDS)
+    if unknown:
+        raise BadRequestError(f"{field_name} has unsupported identity fields: {', '.join(unknown)}")
+    if not isinstance(value.get("kind"), str) or not value["kind"]:
+        raise BadRequestError(f"{field_name}.kind must be a non-empty string")
+    try:
+        validate_identifier(value.get("id"), f"{field_name}.id")
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+    if "version" in value and (not isinstance(value["version"], str) or not value["version"]):
+        raise BadRequestError(f"{field_name}.version must be a non-empty string")
+    if "digest" in value:
+        _validate_digest(value["digest"], f"{field_name}.digest")
+
+
+def _validate_digest(value, field_name: str) -> None:
+    """Validate a digest using the common contract definition."""
+    if not isinstance(value, str) or DIGEST_PATTERN.fullmatch(value) is None:
+        raise BadRequestError(f"{field_name} must match algorithm:hex with at least 8 hex characters")
+
+
 def main() -> None:
+    """Run the local HTTP development component from the command line."""
     parser = argparse.ArgumentParser(description="Run the local ATG run-state development component")
     parser.add_argument("--database", default="atg-run-state.sqlite3")
     parser.add_argument("--host", default="127.0.0.1")

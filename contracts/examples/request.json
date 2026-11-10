@@ -15,5 +15,9 @@
   "objective_ids": ["objective-001"],
   "requested_by": "requester-001",
   "mode": "full",
-  "constraints": ["offline-test-generation"]
+  "constraints": ["offline-test-generation"],
+  "requested_capabilities": ["java"],
+  "tenant_id": "tenant-001",
+  "authorization_ref": "authorization-001",
+  "environment": {"kind": "atg-platform", "id": "development", "version": "1"}
 }

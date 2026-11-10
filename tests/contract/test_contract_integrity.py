@@ -58,6 +58,22 @@ def graph_documents():
 
 
 class ContractIntegrityTests(unittest.TestCase):
+    def test_terminal_record_requires_request_and_admission(self):
+        documents = graph_documents()
+        documents.append({
+            "contract": "atg.run_terminal",
+            "terminal_id": "terminal-1",
+            "run_id": "run-1",
+            "request_id": "request-1",
+            "admission_id": "admission-1",
+        })
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn(
+            "run_terminal.admission_id references missing atg.run_admission/admission-1",
+            raised.exception.errors,
+        )
+
     def test_schema_valid_example_graph_is_consistent(self):
         root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
         filenames = [
