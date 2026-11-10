@@ -112,6 +112,14 @@ class ObjectiveCandidateTests(unittest.TestCase):
         self.assertEqual([candidate.disposition for candidate in result.candidates], ["stated_gap", "stated_gap"])
         self.assertEqual(result.candidates[0].limitations, ("Expected behavior needs review.",))
 
+    def test_needs_evidence_duplicates_remain_needs_evidence(self):
+        result = derive_objective_candidates(
+            (objective("objective-missing-1", evidence_refs=()), objective("objective-missing-2", evidence_refs=())),
+            context(),
+        )
+        self.assertEqual([candidate.disposition for candidate in result.candidates], ["needs_evidence", "needs_evidence"])
+        self.assertEqual([candidate.duplicate_of for candidate in result.candidates], [None, None])
+
 
 if __name__ == "__main__":
     unittest.main()

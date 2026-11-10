@@ -9,6 +9,8 @@ from pathlib import PurePosixPath
 
 
 FACT_ORIGINS = frozenset({"supplied", "discovered", "inferred"})
+FACT_CERTAINTIES = frozenset({"definite", "possible", "unresolved"})
+FACT_STATUSES = frozenset({"emitted", "abstained"})
 FINDING_KINDS = frozenset({"missing", "stale", "conflicting", "ambiguous", "unsupported", "unauthorized", "incomplete"})
 COVERAGE_KINDS = frozenset({"configuration", "report", "static_reference", "runtime"})
 CAPABILITY_STATUSES = frozenset({"available", "partial", "unavailable"})
@@ -48,6 +50,8 @@ class ContextFact:
     claim: str
     source_path: str | None = None
     evidence_refs: tuple[str, ...] = ()
+    certainty: str = "definite"
+    status: str = "emitted"
 
     def __post_init__(self) -> None:
         """Validate fact identity, origin, claim, and optional citation path."""
@@ -59,6 +63,10 @@ class ContextFact:
             _validate_relative_path(self.source_path, "source_path")
         if any(not reference for reference in self.evidence_refs):
             raise ValueError("fact evidence references must be non-empty")
+        if self.certainty not in FACT_CERTAINTIES:
+            raise ValueError(f"unsupported fact certainty: {self.certainty}")
+        if self.status not in FACT_STATUSES:
+            raise ValueError(f"unsupported fact status: {self.status}")
 
 
 @dataclass(frozen=True)

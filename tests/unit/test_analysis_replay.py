@@ -39,6 +39,8 @@ class AnalysisReplayTests(unittest.TestCase):
         for evidence in result.evidence:
             validate_contract_document(evidence, "evidence")
         self.assertEqual(result.facts[0].source_path, "src/main/java/com/example/Resource.java")
+        self.assertEqual((result.facts[0].certainty, result.facts[0].status), ("definite", "emitted"))
+        self.assertEqual((result.facts[1].certainty, result.facts[1].status), ("possible", "emitted"))
         self.assertTrue(any(finding.kind == "ambiguous" for finding in result.findings))
         capabilities = {capability.capability: capability.status for capability in result.capabilities}
         self.assertEqual(capabilities["java-semantic-calls"], "available")
@@ -88,12 +90,23 @@ class AnalysisReplayTests(unittest.TestCase):
         abstained = next(evidence for evidence in result.evidence if "abstained" in evidence["claims"][0])
         validate_contract_document(abstained, "evidence")
         self.assertTrue(any("abstained" in limitation["description"] for limitation in abstained["limitations"]))
+        self.assertEqual(
+            (next(fact for fact in result.facts if fact.status == "abstained").certainty, "abstained"),
+            ("unresolved", "abstained"),
+        )
 
         vpe = json.loads((FIXTURES / "vpe-analysis-context.json").read_text())
         vpe["provenance"].pop("preparedAt")
         result = VPEAnalysisContextReplayAdapter(vpe).collect(SUBJECT)
         self.assertEqual(result.evidence, ())
         self.assertIn("finding-vpe-prepared-at", {finding.finding_id for finding in result.findings})
+
+    def test_duplicate_java_facts_are_not_emitted_twice(self):
+        document = json.loads((FIXTURES / "java-semantic-call-facts.json").read_text())
+        document["providerFacts"].append(dict(document["providerFacts"][0]))
+        result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
+        self.assertEqual(len(result.facts), 2)
+        self.assertIn("finding-java-duplicate-", "".join(finding.finding_id for finding in result.findings))
 
 
 if __name__ == "__main__":

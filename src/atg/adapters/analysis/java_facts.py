@@ -55,6 +55,7 @@ class JavaSemanticFactsReplayAdapter:
 
         evidence_documents: list[Mapping[str, object]] = []
         facts: list[ContextFact] = []
+        seen_fact_ids: set[str] = set()
         provider_facts = document.get("providerFacts") if isinstance(document.get("providerFacts"), list) else []
         framework_facts = document.get("frameworkFacts") if isinstance(document.get("frameworkFacts"), list) else []
         for fact_set, values in (("provider", provider_facts), ("framework", framework_facts)):
@@ -63,6 +64,15 @@ class JavaSemanticFactsReplayAdapter:
                     findings.append(AnalysisFinding(f"finding-java-{fact_set}-{index}", "incomplete", "Java analyzer emitted a non-object fact."))
                     continue
                 fact_digest = _digest(value).removeprefix("sha256:")[:16]
+                fact_id = f"fact-java-{fact_set}-{fact_digest}"
+                if fact_id in seen_fact_ids:
+                    findings.append(AnalysisFinding(
+                        f"finding-java-duplicate-{fact_digest}",
+                        "conflicting",
+                        f"Java analyzer emitted duplicate {fact_set} fact {fact_id}.",
+                    ))
+                    continue
+                seen_fact_ids.add(fact_id)
                 evidence_id = f"evidence-java-{fact_set}-{fact_digest}"
                 certainty = str(value.get("certainty", "unresolved"))
                 status = str(value.get("status", "emitted"))
@@ -81,11 +91,13 @@ class JavaSemanticFactsReplayAdapter:
                     evidence_id, evidence_subject, document, value, source_path, line, claim, raw_digest
                 ))
                 facts.append(ContextFact(
-                    f"fact-java-{fact_set}-{fact_digest}",
+                    fact_id,
                     "supplied",
                     claim,
                     source_path,
                     (evidence_id,),
+                    certainty,
+                    status,
                 ))
                 if certainty in {"possible", "unresolved"} or status == "abstained":
                     findings.append(AnalysisFinding(
