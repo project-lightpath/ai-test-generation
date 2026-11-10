@@ -18,9 +18,10 @@ from atg.adapters.failure_register import FailureRegisterCheck
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
-from atg.application.analysis import AnalysisConflictError, AnalysisRequest, AnalysisService
+from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService
 from atg.application.readiness import PlatformReadinessService
 from atg.domain.repository_analysis import RepositorySubject
+from atg.domain.schema_validation import ContractValidationError, contract_asset_path
 from atg.domain.run_state import (
     InvalidEventError,
     RunEvent,
@@ -93,7 +94,7 @@ def create_server(
 
         def evaluate(self, request):
             """Verify that the versioned contract files are present and parseable."""
-            contracts = Path(__file__).parents[3] / "contracts" / "v1"
+            contracts = contract_asset_path("v1")
             try:
                 paths = tuple(contracts.glob("*.schema.json"))
                 if not paths:
@@ -111,7 +112,7 @@ def create_server(
             )
 
     failure_register = FailureRegisterCheck(
-        Path(__file__).parents[3] / "contracts" / "failure-register" / "v1" / "cases.json"
+        contract_asset_path("failure-register/v1") / "cases.json"
     )
     readiness_service = PlatformReadinessService((ContractCheck(), failure_register))
     admission_service = AdmissionService(store, (CapabilityCheck(), IdentityCheck()), readiness=readiness_service)
@@ -143,6 +144,8 @@ def create_server(
                     self._respond(404, {"error": "not found"})
             except KeyError:
                 self._respond(404, {"error": "run not found"})
+            except ContractValidationError:
+                self._respond(500, {"error": "persisted analysis failed integrity validation"})
 
         def do_POST(self):  # noqa: N802
             """Accept run, event, and admission requests."""
@@ -267,7 +270,7 @@ def create_server(
                     _validate_identity(repository, "repository")
                     if not isinstance(repository.get("version"), str) or not repository["version"]:
                         raise BadRequestError("repository.version is required for analysis")
-                    repository_root = repository_roots.get(repository["id"])
+                    repository_root = repository_roots.get((repository["id"], repository["version"]))
                     if repository_root is None:
                         raise BadRequestError("repository is not materialized for local analysis")
                     for field in ("analysis_id", "request_id", "run_id"):
@@ -295,7 +298,7 @@ def create_server(
                             request_id=body["request_id"],
                             run_id=body["run_id"],
                             repository_root=str(repository_root),
-                            subject=RepositorySubject(repository["id"], repository["version"]),
+                            subject=RepositorySubject(repository["id"], repository["version"], repository.get("digest")),
                             expected_revision=body["expected_revision"],
                             occurred_at=body["occurred_at"],
                             objective_refs=tuple(body.get("objective_refs", [])),
@@ -346,6 +349,10 @@ def create_server(
                 self._respond(409, {"error": str(exc)})
             except AnalysisConflictError as exc:
                 self._respond(409, {"error": str(exc)})
+            except AnalysisProcessingError:
+                self._respond(422, {"error": "analysis processing failed"})
+            except ContractValidationError:
+                self._respond(500, {"error": "persisted analysis failed integrity validation"})
 
         def _parts(self):
             """Return decoded non-empty URL path components."""

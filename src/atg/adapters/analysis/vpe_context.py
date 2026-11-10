@@ -13,6 +13,9 @@ from atg.ports.analyzer import AnalyzerEvidenceResult, RawAnalysisArtifact
 class VPEAnalysisContextReplayAdapter:
     """Translate a captured VPE AnalysisContext without defining VEX semantics."""
 
+    capabilities = ("repository-preparation", "build-context", "dependency-context", "framework-metadata")
+    producer_identity = {"kind": "analysis-adapter", "id": "vpe-analysis-context-replay", "version": "1"}
+
     def __init__(self, document: Mapping[str, object]) -> None:
         """Capture one immutable replay document."""
         self._document = dict(document)
@@ -29,7 +32,23 @@ class VPEAnalysisContextReplayAdapter:
         evidence_id = f"evidence-vpe-context-{suffix}"
         findings: list[AnalysisFinding] = []
         if document.get("schemaVersion") != "0.1.0":
-            findings.append(AnalysisFinding("finding-vpe-version", "unsupported", "VPE analysis context schema version is unsupported."))
+            artifact = RawAnalysisArtifact(
+                f"artifact-vpe-context-{suffix}",
+                "application/vnd.project-lightpath.vpe-analysis-context+json",
+                document,
+            )
+            return AnalyzerEvidenceResult(
+                (),
+                (),
+                (
+                    CapabilityObservation("repository-preparation", "unavailable"),
+                    CapabilityObservation("build-context", "unavailable"),
+                    CapabilityObservation("dependency-context", "unavailable"),
+                    CapabilityObservation("framework-metadata", "unavailable"),
+                ),
+                (AnalysisFinding("finding-vpe-version", "unsupported", "VPE analysis context schema version is unsupported."),),
+                (artifact,),
+            )
         if repository != subject.repository_id or revision != subject.revision:
             findings.append(AnalysisFinding("finding-vpe-subject", "conflicting", "VPE analysis context belongs to a different repository subject or revision."))
 
@@ -64,6 +83,7 @@ class VPEAnalysisContextReplayAdapter:
             "kind": "git-repository",
             "id": repository if isinstance(repository, str) and repository else subject.repository_id,
             "version": revision if isinstance(revision, str) and revision else subject.revision,
+            **({"digest": provenance.get("sourceFingerprint")} if provenance.get("sourceFingerprint") else {}),
         }
         evidence = {
             "contract": "atg.evidence",

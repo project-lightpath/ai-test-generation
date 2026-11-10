@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from atg.domain.repository_analysis import RepositoryContextResult, RepositorySubject
 
@@ -18,6 +18,8 @@ class RepositoryContextRequest:
 
 class RepositoryContextPort(Protocol):
     """Discover repository facts without executing repository-controlled code."""
+
+    producer_identity: Mapping[str, object]
 
     def collect(self, request: RepositoryContextRequest) -> RepositoryContextResult:
         """Return a bounded repository profile and supporting observations."""

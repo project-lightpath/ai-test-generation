@@ -10,6 +10,7 @@ from typing import Mapping
 from atg.domain.repository_analysis import AnalysisFinding, CapabilityObservation, RepositoryContextResult, RepositorySubject
 from atg.domain.objective_candidates import derive_objective_candidates
 from atg.domain.run_state import RunEvent, validate_identifier, validate_timestamp
+from atg.domain.schema_validation import ContractValidationError, validate_contract_document
 from atg.gates.analysis import evaluate_analysis
 from atg.ports.analysis import AnalysisStore
 from atg.ports.analyzer import RawAnalysisArtifact, RepositoryAnalyzerPort
@@ -18,6 +19,10 @@ from atg.ports.repository import RepositoryContextPort, RepositoryContextRequest
 
 class AnalysisConflictError(ValueError):
     """Raised when an analysis identity is reused for different inputs."""
+
+
+class AnalysisProcessingError(ValueError):
+    """Raised when repository analysis cannot be completed safely."""
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,10 @@ class AnalysisRequest:
             identifiers = [document[identifier] for document in documents]
             if len(set(identifiers)) != len(identifiers):
                 raise ValueError(f"{field} identities must be unique")
+        for document in self.supplied_evidence:
+            validate_contract_document(document, "evidence")
+        for document in self.supplied_objectives:
+            validate_contract_document(document, "objective")
         if not isinstance(self.expected_revision, int) or isinstance(self.expected_revision, bool) or self.expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
         validate_timestamp(self.occurred_at, "occurred_at")
@@ -113,7 +122,7 @@ class AnalysisRecord:
     @classmethod
     def from_storage_document(cls, document: Mapping[str, object], *, duplicate: bool = False) -> "AnalysisRecord":
         """Reconstruct a bundle loaded from durable reference persistence."""
-        return cls(
+        record = cls(
             request_digest=str(document["request_digest"]),
             manifest=dict(document["manifest"]),  # type: ignore[arg-type]
             checkpoint=dict(document["checkpoint"]) if document.get("checkpoint") is not None else None,  # type: ignore[arg-type]
@@ -123,6 +132,8 @@ class AnalysisRecord:
             artifacts=tuple(dict(item) for item in document.get("artifacts", [])),  # type: ignore[arg-type]
             duplicate=duplicate,
         )
+        validate_analysis_record(record)
+        return record
 
 
 class AnalysisService:
@@ -152,11 +163,16 @@ class AnalysisService:
         if admission is None or admission.request_id != request.request_id:
             raise AnalysisConflictError("analysis request does not match the admitted run")
         admitted_repository = admission.identities.get("repository")
-        if admitted_repository is not None and (
+        if admitted_repository is None:
+            raise AnalysisConflictError("admission does not contain a repository identity")
+        if (
             admitted_repository.get("id") != request.subject.repository_id
             or admitted_repository.get("version") != request.subject.revision
+            or admitted_repository.get("digest") != request.subject.content_digest
         ):
             raise AnalysisConflictError("analysis repository does not match the admitted request")
+        if not set(request.requested_capabilities).issubset(admission.admitted_capabilities):
+            raise AnalysisConflictError("analysis capabilities exceed the admitted capability set")
 
         start_event = RunEvent(
             event_id=f"{request.analysis_id}-started",
@@ -165,18 +181,36 @@ class AnalysisService:
             expected_revision=request.expected_revision,
             occurred_at=request.occurred_at,
         )
-        self._store.apply(start_event)
-        context = self._repository_context.collect(RepositoryContextRequest(request.subject, request.repository_root))
+        try:
+            context = self._repository_context.collect(RepositoryContextRequest(request.subject, request.repository_root))
+        except Exception as exc:
+            raise AnalysisProcessingError("repository discovery failed") from exc
         analyzer_evidence: list[Mapping[str, object]] = []
         analyzer_artifacts: list[RawAnalysisArtifact] = []
+        producer_identities: list[Mapping[str, object]] = [self._repository_context.producer_identity]
         for index, analyzer in enumerate(self._analyzers, 1):
+            if not set(analyzer.capabilities).issubset(admission.admitted_capabilities):
+                continue
+            producer_identities.append(analyzer.producer_identity)
             try:
                 result = analyzer.collect(request.subject)
-            except Exception as exc:
+            except Exception:
                 context = replace(
                     context,
                     findings=(*context.findings, AnalysisFinding(
-                        f"finding-analyzer-{index}", "incomplete", f"Analyzer replay failed: {exc}"
+                        f"finding-analyzer-{index}", "incomplete", "Analyzer replay failed safely."
+                    )),
+                    capabilities=(*context.capabilities, CapabilityObservation(f"analyzer-{index}", "unavailable")),
+                )
+                continue
+            try:
+                for document in result.evidence:
+                    validate_contract_document(document, "evidence")
+            except ContractValidationError:
+                context = replace(
+                    context,
+                    findings=(*context.findings, AnalysisFinding(
+                        f"finding-analyzer-contract-{index}", "conflicting", "Analyzer emitted invalid canonical evidence."
                     )),
                     capabilities=(*context.capabilities, CapabilityObservation(f"analyzer-{index}", "unavailable")),
                 )
@@ -202,7 +236,20 @@ class AnalysisService:
             analyzer_evidence.extend(result.evidence)
             analyzer_artifacts.extend(result.artifacts)
         context = _require_capabilities(context, request.requested_capabilities)
-        record = _build_record(request, digest, context, tuple(analyzer_evidence), tuple(analyzer_artifacts))
+        try:
+            record = _build_record(
+                request,
+                digest,
+                context,
+                tuple(analyzer_evidence),
+                tuple(analyzer_artifacts),
+                admission.identities,
+                tuple(producer_identities),
+            )
+        except AnalysisConflictError:
+            raise
+        except (ContractValidationError, TypeError, ValueError) as exc:
+            raise AnalysisProcessingError("analysis normalization failed") from exc
         if record.checkpoint is not None:
             outcome_event = RunEvent(
                 event_id=f"{request.analysis_id}-completed",
@@ -231,7 +278,7 @@ class AnalysisService:
                 reason="; ".join(record.manifest["gaps"]),  # type: ignore[arg-type]
             )
             checkpoint_event = None
-        return self._store.record_analysis(record, outcome_event, checkpoint_event)
+        return self._store.record_analysis(record, start_event, outcome_event, checkpoint_event)
 
 
 def _build_record(
@@ -240,6 +287,8 @@ def _build_record(
     context: RepositoryContextResult,
     analyzer_evidence: tuple[Mapping[str, object], ...] = (),
     analyzer_artifacts: tuple[RawAnalysisArtifact, ...] = (),
+    admission_identities: Mapping[str, Mapping[str, object]] | None = None,
+    producer_identities: tuple[Mapping[str, object], ...] = (),
 ) -> AnalysisRecord:
     """Normalize repository context into an analysis bundle and checkpoint."""
     generated_fact_evidence = {
@@ -328,6 +377,7 @@ def _build_record(
             "kind": "git-repository",
             "id": request.subject.repository_id,
             "version": request.subject.revision,
+            **({"digest": request.subject.content_digest} if request.subject.content_digest else {}),
         },
         "profile_digest": context.profile.scanned_content_digest,
         "outcome": "needs_human_review",
@@ -369,7 +419,11 @@ def _build_record(
             }
             for finding in context.findings
         ],
-        "assumptions": ["The supplied immutable revision identifies the intended analysis subject."],
+        "assumptions": [
+            "Materialized content matched the admitted subject digest."
+            if request.subject.content_digest
+            else "The materializer attested the repository revision; analyzed bytes are identified by profile_digest."
+        ],
         "gaps": [finding.description for finding in context.findings],
         "limitations": [],
     }
@@ -396,13 +450,25 @@ def _build_record(
         "application/vnd.atg.analysis+json",
         manifest,
     )
+    provenance_identities = _unique_identities((
+        manifest["subject"],
+        *(admission_identities or {}).values(),
+        *(
+            document["source"]["identity"]
+            for document in evidence
+            if isinstance(document.get("source"), Mapping)
+            and isinstance(document["source"].get("identity"), Mapping)
+        ),
+    ))
+    tool_identities = _unique_identities(producer_identities)
     provenance = {
         "contract": "atg.provenance",
         "version": "1.0",
         "provenance_id": provenance_id,
         "run_id": request.run_id,
         "recorded_at": request.occurred_at,
-        "identities": [manifest["subject"]],
+        "identities": provenance_identities,
+        "tools": tool_identities,
         "artifacts": [
             profile_artifact["artifact"],
             tests_artifact["artifact"],
@@ -410,7 +476,7 @@ def _build_record(
             analysis_artifact["artifact"],
             *[artifact["artifact"] for artifact in replay_artifacts],
         ],
-        "contract_versions": {"atg.analysis": "1.0", "atg.evidence": "1.0", "atg.objective": "1.0", "atg.provenance": "1.0"},
+        "contract_versions": {"atg.analysis": "1.0", "atg.checkpoint": "1.0", "atg.evidence": "1.0", "atg.objective": "1.0", "atg.provenance": "1.0"},
         "limitations": [],
     }
     checkpoint = {
@@ -424,7 +490,7 @@ def _build_record(
         "created_at": request.occurred_at,
         "reviewed_artifact": analysis_artifact["artifact"],
     }
-    return AnalysisRecord(
+    record = AnalysisRecord(
         request_digest,
         manifest,
         checkpoint if gate.reviewable else None,
@@ -433,6 +499,8 @@ def _build_record(
         provenance,
         (profile_artifact, tests_artifact, coverage_artifact, *replay_artifacts, analysis_artifact),
     )
+    validate_analysis_record(record)
+    return record
 
 
 def _fact_evidence(request: AnalysisRequest, fact) -> dict[str, object]:
@@ -449,6 +517,7 @@ def _fact_evidence(request: AnalysisRequest, fact) -> dict[str, object]:
             "kind": "git-repository",
             "id": request.subject.repository_id,
             "version": request.subject.revision,
+            **({"digest": request.subject.content_digest} if request.subject.content_digest else {}),
         },
         "source": {
             "identity": {"kind": "git", "id": request.subject.repository_id},
@@ -520,3 +589,77 @@ def _require_capabilities(
         capabilities=tuple(observations[name] for name in sorted(observations)),
         findings=tuple(findings),
     )
+
+
+def _unique_identities(identities) -> list[Mapping[str, object]]:
+    """Return deterministic unique canonical identities for provenance."""
+    unique: dict[str, Mapping[str, object]] = {}
+    for identity in identities:
+        if not isinstance(identity, Mapping):
+            continue
+        key = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        unique[key] = identity
+    return [unique[key] for key in sorted(unique)]
+
+
+def validate_analysis_record(record: AnalysisRecord) -> None:
+    """Validate schemas, artifact closure, digests, and checkpoint binding."""
+    for document, contract in (
+        (record.manifest, "analysis"),
+        (record.provenance, "provenance"),
+    ):
+        validate_contract_document(document, contract)
+    for document in record.evidence:
+        validate_contract_document(document, "evidence")
+    for document in record.objectives:
+        validate_contract_document(document, "objective")
+    if record.checkpoint is not None:
+        validate_contract_document(record.checkpoint, "checkpoint")
+    elif record.manifest.get("outcome") == "needs_human_review":
+        raise ContractValidationError("reviewable analysis is missing its checkpoint")
+
+    artifacts: dict[str, Mapping[str, object]] = {}
+    for stored in record.artifacts:
+        metadata = stored.get("artifact")
+        if not isinstance(metadata, Mapping) or "content" not in stored:
+            raise ContractValidationError("invalid stored analysis artifact")
+        artifact_id = metadata.get("artifact_id")
+        if not isinstance(artifact_id, str) or artifact_id in artifacts:
+            raise ContractValidationError("invalid or duplicate analysis artifact identity")
+        encoded = json.dumps(stored["content"], sort_keys=True, separators=(",", ":")).encode()
+        expected_digest = "sha256:" + hashlib.sha256(encoded).hexdigest()
+        if metadata.get("digest") != expected_digest or metadata.get("size_bytes") != len(encoded):
+            raise ContractValidationError("analysis artifact content metadata mismatch")
+        artifacts[artifact_id] = metadata
+
+    provenance_documents = [
+        artifact for artifact in record.provenance.get("artifacts", [])
+        if isinstance(artifact, Mapping)
+    ]
+    provenance_artifacts = {artifact.get("artifact_id"): artifact for artifact in provenance_documents}
+    if len(provenance_artifacts) != len(provenance_documents):
+        raise ContractValidationError("analysis provenance contains duplicate artifact identities")
+    if record.manifest.get("provenance_ref") != record.provenance.get("provenance_id"):
+        raise ContractValidationError("analysis provenance identity mismatch")
+    if record.provenance.get("run_id") != record.manifest.get("run_id"):
+        raise ContractValidationError("analysis provenance belongs to a different run")
+    if provenance_artifacts != artifacts:
+        raise ContractValidationError("analysis provenance artifact set differs from stored artifacts")
+    if set(record.manifest.get("artifact_refs", [])) != set(artifacts):
+        raise ContractValidationError("analysis manifest artifact set differs from stored artifacts")
+    for artifact_id in record.manifest.get("artifact_refs", []):
+        if artifact_id not in artifacts or provenance_artifacts.get(artifact_id) != artifacts[artifact_id]:
+            raise ContractValidationError("analysis artifact reference is not closed by provenance")
+    analysis_artifact_id = f"artifact-{record.manifest.get('analysis_id')}"
+    analysis_stored = next(
+        (stored for stored in record.artifacts if stored.get("artifact", {}).get("artifact_id") == analysis_artifact_id),
+        None,
+    )
+    if analysis_stored is None or analysis_stored.get("content") != record.manifest:
+        raise ContractValidationError("analysis manifest differs from its content-addressed artifact")
+    if record.checkpoint is not None:
+        reviewed = record.checkpoint.get("reviewed_artifact")
+        if record.checkpoint.get("run_id") != record.manifest.get("run_id"):
+            raise ContractValidationError("analysis checkpoint belongs to a different run")
+        if not isinstance(reviewed, Mapping) or artifacts.get(reviewed.get("artifact_id")) != reviewed:
+            raise ContractValidationError("analysis checkpoint artifact binding mismatch")

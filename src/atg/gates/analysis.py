@@ -107,6 +107,7 @@ def _subject_matches(value: object, subject: RepositorySubject) -> bool:
         isinstance(value, Mapping)
         and value.get("id") == subject.repository_id
         and value.get("version") == subject.revision
+        and (subject.content_digest is None or value.get("digest") == subject.content_digest)
     )
 
 

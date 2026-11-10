@@ -31,8 +31,10 @@ Files are processed with explicit count and byte limits; symbolic links are not
 followed. Repository instructions are untrusted observations and cannot grant
 execution authorization.
 
-The development HTTP boundary maps repository identities to configured local
-roots. Clients cannot submit arbitrary local filesystem paths.
+The development HTTP boundary maps repository identity and revision pairs to
+configured local roots. Clients cannot submit arbitrary local filesystem paths.
+Reviewable analysis also requires the admitted content digest to match the
+bounded digest computed from the materialized repository bytes.
 
 ## Capabilities
 
@@ -40,6 +42,8 @@ Capabilities use explicit `available`, `partial`, and `unavailable` states.
 Requested unavailable capabilities make analysis `not_evaluable`; absence is
 never interpreted as an empty successful result. Local discovery currently
 reports repository, test, and coverage-artifact discovery capabilities.
+Analyzer execution requires its complete declared capability set to have been
+admitted; configured but unauthorized analyzers are not invoked.
 
 The replay translators report narrower capabilities:
 

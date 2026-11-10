@@ -20,6 +20,7 @@ class AnalysisStore(Protocol):
     def record_analysis(
         self,
         record: "AnalysisRecord",
+        start_event: RunEvent,
         outcome_event: RunEvent,
         checkpoint_event: RunEvent | None,
     ) -> "AnalysisRecord":

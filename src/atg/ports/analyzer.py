@@ -31,5 +31,8 @@ class AnalyzerEvidenceResult:
 class RepositoryAnalyzerPort(Protocol):
     """Translate bounded external analyzer output into ATG-owned evidence."""
 
+    capabilities: tuple[str, ...]
+    producer_identity: Mapping[str, object]
+
     def collect(self, subject: RepositorySubject) -> AnalyzerEvidenceResult:
         """Return normalized replay evidence for one immutable subject."""

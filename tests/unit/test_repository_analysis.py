@@ -88,6 +88,33 @@ class RepositoryAnalysisTests(unittest.TestCase):
             self.assertTrue(any(finding.finding_id == "finding-file-limit" for finding in result.findings))
             self.assertEqual(result.profile.scanned_file_count, 2)
 
+    def test_file_and_total_byte_limits_exclude_content(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "large.py").write_bytes(b"x" * 20)
+            result = LocalRepositoryContextAdapter(max_file_bytes=10, max_total_bytes=10).collect(self.request(root))
+            self.assertTrue(any(finding.kind == "incomplete" and finding.path == "large.py" for finding in result.findings))
+
+    def test_expected_content_digest_binds_materialized_bytes(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            adapter = LocalRepositoryContextAdapter()
+            initial = adapter.collect(self.request(root))
+            verified_request = RepositoryContextRequest(
+                RepositorySubject("https://git.example/fixture.git", "abc123", initial.profile.scanned_content_digest),
+                str(root),
+            )
+            verified = adapter.collect(verified_request)
+            self.assertFalse(any(finding.finding_id.startswith("finding-materialization") for finding in verified.findings))
+
+            mismatch_request = RepositoryContextRequest(
+                RepositorySubject("https://git.example/fixture.git", "abc123", "sha256:" + "0" * 64),
+                str(root),
+            )
+            mismatch = adapter.collect(mismatch_request)
+            self.assertTrue(any(finding.finding_id == "finding-materialization-digest" for finding in mismatch.findings))
+
     def test_domain_rejects_escaping_citation_paths(self):
         with self.assertRaises(ValueError):
             ContextFact("fact-1", "discovered", "unsafe", "../outside")

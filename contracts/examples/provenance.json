@@ -9,7 +9,13 @@
     {"kind": "model", "id": "approved-model", "version": "1"},
     {"kind": "worker-image", "id": "atg-worker", "version": "1"}
   ],
-  "artifacts": [],
-  "contract_versions": {"atg.request": "1.0", "atg.generation": "1.0", "atg.execution": "1.0"},
+  "artifacts": [
+    {
+      "artifact_id": "artifact-analysis-001",
+      "media_type": "application/vnd.atg.analysis+json",
+      "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "contract_versions": {"atg.request": "1.0", "atg.analysis": "1.0", "atg.generation": "1.0", "atg.execution": "1.0"},
   "limitations": []
 }

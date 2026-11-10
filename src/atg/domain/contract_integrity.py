@@ -64,7 +64,18 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 require("atg.evidence", evidence_id, "analysis.evidence_refs")
             for objective_id in document.get("objective_refs", []):
                 require("atg.objective", objective_id, "analysis.objective_refs")
-            _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "analysis.provenance_ref")
+            provenance = _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "analysis.provenance_ref")
+            if provenance is not None:
+                provenance_artifacts = {
+                    artifact.get("artifact_id"): artifact
+                    for artifact in provenance.get("artifacts", [])
+                    if isinstance(artifact, Mapping)
+                }
+                for artifact_id in document.get("artifact_refs", []):
+                    if artifact_id not in provenance_artifacts:
+                        errors.append(f"analysis.artifact_refs references missing provenance artifact {artifact_id}")
+                if set(document.get("artifact_refs", [])) != set(provenance_artifacts):
+                    errors.append("analysis artifact_refs must exactly match provenance artifacts")
             candidates = document.get("objective_candidates", [])
             candidate_ids = {candidate.get("candidate_id") for candidate in candidates}
             if len(candidate_ids) != len(candidates):
@@ -123,8 +134,14 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
         if contract == "atg.checkpoint" and document.get("kind") == "analysis_review":
             reviewed = document.get("reviewed_artifact") or {}
             analyses = [candidate for candidate in docs if candidate.get("contract") == "atg.analysis" and candidate.get("run_id") == document.get("run_id")]
-            if not any(reviewed.get("artifact_id") in candidate.get("artifact_refs", []) for candidate in analyses):
+            matching_analyses = [candidate for candidate in analyses if reviewed.get("artifact_id") in candidate.get("artifact_refs", [])]
+            if not matching_analyses:
                 errors.append("analysis_review checkpoint artifact is not referenced by an analysis manifest")
+            for analysis in matching_analyses:
+                provenance = index.get(("atg.provenance", analysis.get("provenance_ref")))
+                artifacts = provenance.get("artifacts", []) if provenance is not None else []
+                if reviewed not in artifacts:
+                    errors.append("analysis_review checkpoint artifact metadata differs from provenance")
         if contract == "atg.run_terminal":
             request = _require_related(
                 document, "atg.request", document.get("request_id"), require, errors,

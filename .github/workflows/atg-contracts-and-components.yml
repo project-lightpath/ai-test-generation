@@ -36,6 +36,13 @@ jobs:
         run: python -m pip install -e '.[test]'
       - name: Validate schemas and fixtures
         run: python scripts/validate_contracts.py
+      - name: Verify installed wheel contract assets
+        run: |
+          python -m pip wheel . --wheel-dir "$RUNNER_TEMP/wheels"
+          python -m venv "$RUNNER_TEMP/atg-wheel"
+          "$RUNNER_TEMP/atg-wheel/bin/pip" install "$RUNNER_TEMP"/wheels/atg_reference-*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/atg-wheel/bin/python" -c 'from atg.domain.schema_validation import contract_asset_path; assert (contract_asset_path("v1") / "analysis.schema.json").is_file()'
       - name: Run unit tests
         env:
           PYTHONPATH: src

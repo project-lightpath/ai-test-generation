@@ -10,6 +10,9 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.component.run_state_server import create_server  # noqa: E402
+from atg.adapters.repository.local import LocalRepositoryContextAdapter  # noqa: E402
+from atg.domain.repository_analysis import RepositorySubject  # noqa: E402
+from atg.ports.repository import RepositoryContextRequest  # noqa: E402
 
 
 class AnalysisHTTPComponentTests(unittest.TestCase):
@@ -22,7 +25,13 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         (self.root / "src" / "app.py").write_text("def value():\n    return 1\n")
         (self.root / "tests" / "test_app.py").write_text("def test_value():\n    assert True\n")
         self.repository_id = "https://git.example/http-analysis.git"
-        self.server = create_server(repository_roots={self.repository_id: str(self.root)})
+        self.repository_digest = LocalRepositoryContextAdapter().collect(RepositoryContextRequest(
+            RepositorySubject(self.repository_id, "abc123"), str(self.root)
+        )).profile.scanned_content_digest
+        self.server = create_server(
+            capabilities=("repository-discovery",),
+            repository_roots={(self.repository_id, "abc123"): str(self.root)},
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_port}"
@@ -60,11 +69,12 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
             "run_id": "run-http-analysis",
             "submitted_at": "2026-11-09T20:00:00Z",
             "source": {"identity": {"kind": "vpe", "id": "vpe-1"}, "locator": "https://example.invalid/request"},
-            "repository": {"kind": "git-repository", "id": self.repository_id, "version": "abc123"},
+            "repository": {"kind": "git-repository", "id": self.repository_id, "version": "abc123", "digest": self.repository_digest},
             "requested_by": "user-1",
             "tenant_id": "tenant-1",
             "authorization_ref": "authorization-1",
             "mode": "analyze",
+            "requested_capabilities": ["repository-discovery"],
         }
         status, document = self.request("POST", "/admissions", body, {"Idempotency-Key": "analysis-http-admission"})
         self.assertEqual(status, 201)
@@ -76,7 +86,7 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
             "analysis_id": "analysis-http-1",
             "request_id": "request-http-analysis",
             "run_id": "run-http-analysis",
-            "repository": {"kind": "git-repository", "id": self.repository_id, "version": "abc123"},
+            "repository": {"kind": "git-repository", "id": self.repository_id, "version": "abc123", "digest": self.repository_digest},
             "expected_revision": 1,
             "occurred_at": "2099-11-09T20:01:00Z",
             "requested_capabilities": ["repository-discovery"],
@@ -91,6 +101,8 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         self.assertEqual(created["checkpoint"]["kind"], "analysis_review")
         self.assertTrue(created["artifacts"])
         self.assertTrue(all("content" not in artifact for artifact in created["artifacts"]))
+        identity_kinds = {identity["kind"] for identity in created["provenance"]["identities"]}
+        self.assertTrue({"git-repository", "vpe", "tenant", "authorization"}.issubset(identity_kinds))
 
         status, fetched = self.request("GET", "/analyses/analysis-http-1")
         self.assertEqual(status, 200)
@@ -107,6 +119,18 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         status, document = self.request("POST", "/analyses", body)
         self.assertEqual(status, 400)
         self.assertEqual(document, {"error": "repository is not materialized for local analysis"})
+
+    def test_analysis_rejects_invalid_supplied_contract_without_state_change(self):
+        self.admit()
+        body = self.analysis_body()
+        body["supplied_evidence"] = [{"evidence_id": "evidence-invalid"}]
+        status, document = self.request("POST", "/analyses", body)
+        self.assertEqual(status, 400)
+        self.assertEqual(document, {"error": "invalid evidence contract document"})
+        status, state = self.request("GET", "/runs/run-http-analysis")
+        self.assertEqual(status, 200)
+        self.assertEqual(state["status"], "admitted")
+        self.assertEqual(state["revision"], 1)
 
 
 if __name__ == "__main__":

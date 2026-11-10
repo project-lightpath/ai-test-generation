@@ -16,6 +16,7 @@ from typing import Iterator
 
 from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
 from atg.application.analysis import AnalysisConflictError, AnalysisRecord
+from atg.domain.schema_validation import ContractValidationError
 from atg.domain.run_state import (
     DuplicateEventError,
     InvalidTransitionError,
@@ -129,18 +130,24 @@ class SQLiteRunStateStore:
             ).fetchone()
         if row is None:
             return None
-        return AnalysisRecord.from_storage_document(json.loads(row["bundle_json"]))
+        try:
+            return AnalysisRecord.from_storage_document(json.loads(row["bundle_json"]))
+        except ContractValidationError:
+            raise
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ContractValidationError("persisted analysis bundle is corrupt") from exc
 
     def record_analysis(
         self,
         record: AnalysisRecord,
+        start_event: RunEvent,
         outcome_event: RunEvent,
         checkpoint_event: RunEvent | None,
     ) -> AnalysisRecord:
         """Atomically persist analysis output and its gated lifecycle outcome."""
         analysis_id = str(record.manifest["analysis_id"])
         run_id = str(record.manifest["run_id"])
-        _validate_analysis_record(record, outcome_event, checkpoint_event)
+        _validate_analysis_record(record, start_event, outcome_event, checkpoint_event)
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -151,10 +158,12 @@ class SQLiteRunStateStore:
                 if existing is not None:
                     if existing["request_digest"] != record.request_digest:
                         raise AnalysisConflictError("analysis identity is bound to different inputs")
-                    self._connection.execute("COMMIT")
-                    return AnalysisRecord.from_storage_document(
+                    stored_record = AnalysisRecord.from_storage_document(
                         json.loads(existing["bundle_json"]), duplicate=True
                     )
+                    self._connection.execute("COMMIT")
+                    return stored_record
+                self._apply_locked(start_event)
                 self._apply_locked(outcome_event)
                 if checkpoint_event is not None:
                     self._apply_locked(checkpoint_event)
@@ -372,11 +381,13 @@ def _admission_from_document(document: dict) -> AdmissionResult:
         reason=document.get("reason"),
         limitations=tuple(document.get("limitations", [])),
         identities=document.get("identities", {}),
+        admitted_capabilities=tuple(document.get("admitted_capabilities", [])),
     )
 
 
 def _validate_analysis_record(
     record: AnalysisRecord,
+    start_event: RunEvent,
     outcome_event: RunEvent,
     checkpoint_event: RunEvent | None,
 ) -> None:
@@ -384,8 +395,10 @@ def _validate_analysis_record(
     manifest = record.manifest
     checkpoint = record.checkpoint
     run_id = manifest.get("run_id")
-    if outcome_event.run_id != run_id:
+    if start_event.run_id != run_id or outcome_event.run_id != run_id:
         raise ValueError("analysis bundle and lifecycle event must belong to one run")
+    if start_event.event_type != "analysis_started":
+        raise ValueError("analysis persistence requires an analysis_started event")
     if checkpoint is None:
         expected = "analysis_blocked" if manifest.get("outcome") == "blocked" else "analysis_inconclusive"
         if checkpoint_event is not None or outcome_event.event_type != expected:

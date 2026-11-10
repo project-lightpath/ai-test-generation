@@ -7,13 +7,17 @@ name = "atg-reference"
 version = "0.1.0"
 description = "AI Test Generation service and contract components"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["jsonschema>=4.23,<5", "rfc3339-validator>=0.1.4"]
 
 [project.scripts]
 atg-run-state-server = "atg.component.run_state_server:main"
 
 [project.optional-dependencies]
-test = ["jsonschema>=4.23,<5", "rfc3339-validator>=0.1.4"]
+test = []
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"share/atg/contracts/v1" = ["contracts/v1/*.schema.json"]
+"share/atg/contracts/failure-register/v1" = ["contracts/failure-register/v1/*.json"]

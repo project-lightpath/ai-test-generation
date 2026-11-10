@@ -29,11 +29,14 @@ class RepositorySubject:
 
     repository_id: str
     revision: str
+    content_digest: str | None = None
 
     def __post_init__(self) -> None:
         """Require stable repository and revision identities."""
         if not self.repository_id or not self.revision:
             raise ValueError("repository subject requires repository_id and revision")
+        if self.content_digest is not None and not self.content_digest.startswith("sha256:"):
+            raise ValueError("repository content_digest must be a sha256 digest")
 
 
 @dataclass(frozen=True)

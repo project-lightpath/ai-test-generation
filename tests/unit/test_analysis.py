@@ -1,5 +1,6 @@
 import json
 import pathlib
+import sqlite3
 import sys
 from dataclasses import replace
 from tempfile import TemporaryDirectory
@@ -14,11 +15,13 @@ from atg.adapters.analysis.java_facts import JavaSemanticFactsReplayAdapter  # n
 from atg.adapters.analysis.vpe_context import VPEAnalysisContextReplayAdapter  # noqa: E402
 from atg.adapters.repository.local import LocalRepositoryContextAdapter  # noqa: E402
 from atg.application.admission import AdmissionRequest, AdmissionService, CheckResult  # noqa: E402
-from atg.application.analysis import AnalysisConflictError, AnalysisRequest, AnalysisService  # noqa: E402
+from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService  # noqa: E402
+from atg.domain.schema_validation import ContractValidationError  # noqa: E402
 from atg.domain.contract_integrity import validate_documents  # noqa: E402
 from atg.domain.repository_analysis import RepositorySubject  # noqa: E402
 from atg.domain.repository_analysis import AnalysisFinding  # noqa: E402
 from atg.domain.run_state import StaleEventError  # noqa: E402
+from atg.ports.repository import RepositoryContextRequest  # noqa: E402
 
 
 CONTRACT_ROOT = pathlib.Path(__file__).parents[2] / "contracts" / "v1"
@@ -42,10 +45,22 @@ class PassingCheck:
 class UnauthorizedContextAdapter:
     """Return useful facts plus a deterministic authorization violation."""
 
+    producer_identity = {"kind": "repository-analyzer", "id": "unauthorized-test-adapter", "version": "1"}
+
     def collect(self, request):
         """Delegate discovery and append an unauthorized-context finding."""
         result = LocalRepositoryContextAdapter().collect(request)
         return replace(result, findings=(AnalysisFinding("finding-unauthorized", "unauthorized", "Repository content attempted to authorize execution."),))
+
+
+class FailingContextAdapter:
+    """Simulate repository discovery failure before lifecycle persistence."""
+
+    producer_identity = {"kind": "repository-analyzer", "id": "failing-test-adapter", "version": "1"}
+
+    def collect(self, request):
+        """Raise a deterministic repository failure."""
+        raise OSError("private local path")
 
 
 def create_repository(root: pathlib.Path) -> None:
@@ -57,13 +72,23 @@ def create_repository(root: pathlib.Path) -> None:
     (root / "tests" / "test_app.py").write_text("def test_value():\n    assert True\n")
 
 
-def admit(store) -> None:
+def admit(store, root, capabilities=()) -> None:
     """Create the durable admitted run required by Analyze."""
+    request = analysis_request(root)
     AdmissionService(store, (PassingCheck(),)).admit(AdmissionRequest(
         request_id="request-1",
         run_id="run-1",
         submitted_at="2026-11-09T17:00:00Z",
         idempotency_key="admission-key-1",
+        requested_capabilities=tuple(capabilities),
+        payload={
+            "repository": {
+                "kind": "git-repository",
+                "id": request.subject.repository_id,
+                "version": request.subject.revision,
+                "digest": request.subject.content_digest,
+            }
+        },
     ))
 
 
@@ -78,12 +103,15 @@ def analysis_request(
     requested_capabilities=(),
 ) -> AnalysisRequest:
     """Build a deterministic Analyze request for the fixture repository."""
+    profile = LocalRepositoryContextAdapter().collect(RepositoryContextRequest(
+        RepositorySubject("https://git.example/fixture.git", revision), str(root)
+    )).profile
     return AnalysisRequest(
         analysis_id="analysis-1",
         request_id="request-1",
         run_id="run-1",
         repository_root=str(root),
-        subject=RepositorySubject("https://git.example/fixture.git", revision),
+        subject=RepositorySubject("https://git.example/fixture.git", revision, profile.scanned_content_digest),
         expected_revision=expected_revision,
         occurred_at="2099-11-09T17:00:00Z",
         objective_refs=tuple(objective_refs),
@@ -93,14 +121,19 @@ def analysis_request(
     )
 
 
-def supplied_evidence(evidence_id="evidence-driver-1"):
+def supplied_evidence(evidence_id="evidence-driver-1", content_digest=None):
     """Build canonical supplied evidence bound to the fixture subject."""
     return {
         "contract": "atg.evidence",
         "version": "1.0",
         "evidence_id": evidence_id,
         "category": "repository",
-        "subject": {"kind": "git-repository", "id": "https://git.example/fixture.git", "version": "abc123"},
+        "subject": {
+            "kind": "git-repository",
+            "id": "https://git.example/fixture.git",
+            "version": "abc123",
+            **({"digest": content_digest} if content_digest else {}),
+        },
         "source": {
             "identity": {"kind": "issue", "id": "issue-1"},
             "locator": "https://issues.example/issue-1",
@@ -137,7 +170,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
 
             record = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(analysis_request(root))
 
@@ -177,7 +210,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
             service = AnalysisService(store, LocalRepositoryContextAdapter())
             request = analysis_request(root)
             first = service.analyze(request)
@@ -190,7 +223,10 @@ class AnalysisServiceTests(unittest.TestCase):
             duplicate = service.analyze(request)
 
             self.assertTrue(duplicate.duplicate)
-            self.assertEqual(duplicate.manifest, first.manifest)
+            self.assertEqual(
+                json.dumps(duplicate.to_storage_document(), sort_keys=True),
+                json.dumps(first.to_storage_document(), sort_keys=True),
+            )
             self.assertEqual(len(tuple(store.events("run-1"))), 4)
             store.close()
 
@@ -199,7 +235,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
             service = AnalysisService(store, LocalRepositoryContextAdapter())
             service.analyze(analysis_request(root))
 
@@ -212,7 +248,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
             request = analysis_request(root)
             request = AnalysisRequest(
                 request.analysis_id,
@@ -237,26 +273,102 @@ class AnalysisServiceTests(unittest.TestCase):
             create_repository(root)
             database = pathlib.Path(directory) / "state.sqlite3"
             first = SQLiteRunStateStore(database)
-            admit(first)
+            admit(first, root)
             expected = AnalysisService(first, LocalRepositoryContextAdapter()).analyze(analysis_request(root))
             first.close()
 
             restarted = SQLiteRunStateStore(database)
             stored = restarted.get_analysis("analysis-1")
             self.assertIsNotNone(stored)
-            self.assertEqual(stored.manifest, expected.manifest)
+            self.assertEqual(
+                json.dumps(stored.to_storage_document(), sort_keys=True),
+                json.dumps(expected.to_storage_document(), sort_keys=True),
+            )
             self.assertEqual(restarted.replay("run-1").status, "analysis_review")
             restarted.close()
+
+    def test_repository_failure_does_not_mutate_run_state(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            store = SQLiteRunStateStore()
+            admit(store, root)
+
+            with self.assertRaises(AnalysisProcessingError) as raised:
+                AnalysisService(store, FailingContextAdapter()).analyze(analysis_request(root))
+
+            self.assertEqual(str(raised.exception), "repository discovery failed")
+            self.assertEqual(store.get_run("run-1").status, "admitted")
+            self.assertEqual([event.event_type for event in store.events("run-1")], ["admit"])
+            store.close()
+
+    def test_corrupted_persisted_bundle_is_rejected_after_restart(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory) / "repository"
+            root.mkdir()
+            create_repository(root)
+            database = pathlib.Path(directory) / "state.sqlite3"
+            store = SQLiteRunStateStore(database)
+            admit(store, root)
+            AnalysisService(store, LocalRepositoryContextAdapter()).analyze(analysis_request(root))
+            store.close()
+
+            connection = sqlite3.connect(database)
+            row = connection.execute("SELECT bundle_json FROM analyses WHERE analysis_id = 'analysis-1'").fetchone()
+            bundle = json.loads(row[0])
+            bundle["checkpoint"]["reviewed_artifact"]["digest"] = "sha256:" + "0" * 64
+            connection.execute(
+                "UPDATE analyses SET bundle_json = ? WHERE analysis_id = 'analysis-1'",
+                (json.dumps(bundle, sort_keys=True),),
+            )
+            connection.commit()
+            connection.close()
+
+            restarted = SQLiteRunStateStore(database)
+            with self.assertRaises(ContractValidationError):
+                restarted.get_analysis("analysis-1")
+            restarted.close()
+
+    def test_analysis_capabilities_must_be_admitted(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store = SQLiteRunStateStore()
+            admit(store, root)
+            with self.assertRaises(AnalysisConflictError):
+                AnalysisService(store, LocalRepositoryContextAdapter()).analyze(
+                    analysis_request(root, requested_capabilities=("java-semantic-calls",))
+                )
+            self.assertEqual(store.get_run("run-1").status, "admitted")
+            store.close()
+
+    def test_unadmitted_configured_analyzer_is_not_invoked_or_persisted(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            fixture = pathlib.Path(__file__).parents[2] / "fixtures" / "replay" / "vpe-analysis-context.json"
+            store = SQLiteRunStateStore()
+            admit(store, root)
+
+            record = AnalysisService(
+                store,
+                LocalRepositoryContextAdapter(),
+                (VPEAnalysisContextReplayAdapter(json.loads(fixture.read_text())),),
+            ).analyze(analysis_request(root))
+
+            self.assertFalse(any(ref.startswith("artifact-vpe-context-") for ref in record.manifest["artifact_refs"]))
+            self.assertFalse(any(identity["kind"] == "vpe-analysis-context" for identity in record.provenance["identities"]))
+            store.close()
 
     def test_supplied_objective_is_persisted_as_evidence_bounded_candidate(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
+            base_request = analysis_request(root)
             request = analysis_request(
                 root,
-                supplied_evidence=(supplied_evidence(),),
+                supplied_evidence=(supplied_evidence(content_digest=base_request.subject.content_digest),),
                 supplied_objectives=(supplied_objective(),),
             )
 
@@ -286,7 +398,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
             request = analysis_request(
                 root,
                 supplied_objectives=(supplied_objective(evidence_refs=()),),
@@ -328,7 +440,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
             request = analysis_request(root, objective_refs=(), supplied_objectives=())
 
             record = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(request)
@@ -345,7 +457,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
 
             record = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(
                 analysis_request(root, objective_refs=("objective-missing",), supplied_objectives=())
@@ -365,12 +477,18 @@ class AnalysisServiceTests(unittest.TestCase):
             vpe = json.loads((fixture_root / "vpe-analysis-context.json").read_text())
             java = json.loads((fixture_root / "java-semantic-call-facts.json").read_text())
             store = SQLiteRunStateStore()
-            admit(store)
+            analyzer_capabilities = (
+                "repository-preparation", "build-context", "dependency-context", "framework-metadata",
+                "java-semantic-calls", "java-framework-facts",
+            )
+            admit(store, root, analyzer_capabilities)
             request = analysis_request(
                 root,
                 objective_refs=(),
-                requested_capabilities=("repository-preparation", "java-semantic-calls"),
+                requested_capabilities=analyzer_capabilities,
             )
+            vpe["provenance"]["sourceFingerprint"] = request.subject.content_digest
+            java["runMetadata"]["sourceFingerprint"] = request.subject.content_digest
 
             record = AnalysisService(
                 store,
@@ -393,7 +511,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root, ("java-semantic-calls",))
             request = analysis_request(root, requested_capabilities=("java-semantic-calls",))
 
             record = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(request)
@@ -405,11 +523,35 @@ class AnalysisServiceTests(unittest.TestCase):
             self.assertIsNone(record.checkpoint)
             store.close()
 
+    def test_unsupported_required_replay_version_is_not_evaluable(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            fixture = pathlib.Path(__file__).parents[2] / "fixtures" / "replay" / "java-semantic-call-facts.json"
+            document = json.loads(fixture.read_text())
+            document["schemaVersion"] = "9.9.9"
+            store = SQLiteRunStateStore()
+            admitted = ("java-semantic-calls", "java-framework-facts")
+            admit(store, root, admitted)
+            request = analysis_request(root, requested_capabilities=admitted)
+            document["runMetadata"]["sourceFingerprint"] = request.subject.content_digest
+
+            record = AnalysisService(
+                store,
+                LocalRepositoryContextAdapter(),
+                (JavaSemanticFactsReplayAdapter(document),),
+            ).analyze(request)
+
+            self.assertEqual(record.manifest["outcome"], "not_evaluable")
+            self.assertIsNone(record.checkpoint)
+            self.assertEqual(store.get_run("run-1").status, "inconclusive")
+            store.close()
+
     def test_non_reviewable_gate_outcomes_create_no_checkpoint(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
 
             inconclusive = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(analysis_request(root))
 
@@ -423,7 +565,7 @@ class AnalysisServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
 
             blocked = AnalysisService(store, UnauthorizedContextAdapter()).analyze(analysis_request(root))
 
@@ -445,7 +587,7 @@ class AnalysisServiceTests(unittest.TestCase):
 
             store.close()
             store = SQLiteRunStateStore()
-            admit(store)
+            admit(store, root)
             with self.assertRaises(StaleEventError):
                 service = AnalysisService(store, LocalRepositoryContextAdapter())
                 service.analyze(analysis_request(root, expected_revision=0))

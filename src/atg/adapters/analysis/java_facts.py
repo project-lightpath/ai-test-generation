@@ -14,6 +14,9 @@ from atg.ports.analyzer import AnalyzerEvidenceResult, RawAnalysisArtifact
 class JavaSemanticFactsReplayAdapter:
     """Translate captured Java call/framework facts into canonical evidence."""
 
+    capabilities = ("java-semantic-calls", "java-framework-facts")
+    producer_identity = {"kind": "analysis-adapter", "id": "java-semantic-facts-replay", "version": "1"}
+
     def __init__(self, document: Mapping[str, object]) -> None:
         """Capture one immutable SemanticCallFacts replay document."""
         self._document = dict(document)
@@ -27,10 +30,27 @@ class JavaSemanticFactsReplayAdapter:
         evidence_subject = RepositorySubject(
             str(metadata.get("sourceRepository") or subject.repository_id),
             str(metadata.get("sourceRevision") or subject.revision),
+            str(metadata.get("sourceFingerprint")) if metadata.get("sourceFingerprint") else None,
         )
         findings: list[AnalysisFinding] = []
         if document.get("schemaVersion") != "0.1.0" or document.get("artifact") != "SemanticCallFacts":
-            findings.append(AnalysisFinding("finding-java-version", "unsupported", "Java semantic facts contract is unsupported."))
+            artifact = RawAnalysisArtifact(
+                f"artifact-java-semantic-facts-{suffix}",
+                "application/vnd.project-lightpath.java-semantic-call-facts+json",
+                document,
+            )
+            return AnalyzerEvidenceResult(
+                (),
+                (),
+                (
+                    CapabilityObservation("java-semantic-calls", "unavailable"),
+                    CapabilityObservation("java-framework-facts", "unavailable"),
+                    CapabilityObservation("test-discovery", "unavailable"),
+                    CapabilityObservation("runtime-coverage", "unavailable"),
+                ),
+                (AnalysisFinding("finding-java-version", "unsupported", "Java semantic facts contract is unsupported."),),
+                (artifact,),
+            )
         if metadata.get("sourceRepository") != subject.repository_id or metadata.get("sourceRevision") != subject.revision:
             findings.append(AnalysisFinding("finding-java-subject", "conflicting", "Java semantic facts belong to a different repository subject or revision."))
 
@@ -98,7 +118,12 @@ def _evidence_document(evidence_id, subject, document, fact, source_path, line, 
         "version": "1.0",
         "evidence_id": evidence_id,
         "category": "repository",
-        "subject": {"kind": "git-repository", "id": subject.repository_id, "version": subject.revision},
+        "subject": {
+            "kind": "git-repository",
+            "id": subject.repository_id,
+            "version": subject.revision,
+            **({"digest": subject.content_digest} if subject.content_digest else {}),
+        },
         "source": {
             "identity": {"kind": "java-analysis-adapter", "id": context_id, "version": str(document.get("schemaVersion", "unknown"))},
             "locator": locator,

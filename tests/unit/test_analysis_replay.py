@@ -51,6 +51,20 @@ class AnalysisReplayTests(unittest.TestCase):
                 result = adapter(document).collect(other)
                 self.assertTrue(any(finding.kind == "conflicting" for finding in result.findings))
 
+    def test_unsupported_replay_versions_emit_no_facts_and_unavailable_capabilities(self):
+        for adapter, fixture in (
+            (VPEAnalysisContextReplayAdapter, "vpe-analysis-context.json"),
+            (JavaSemanticFactsReplayAdapter, "java-semantic-call-facts.json"),
+        ):
+            with self.subTest(adapter=adapter.__name__):
+                document = json.loads((FIXTURES / fixture).read_text())
+                document["schemaVersion"] = "9.9.9"
+                result = adapter(document).collect(SUBJECT)
+                self.assertEqual(result.facts, ())
+                self.assertEqual(result.evidence, ())
+                self.assertTrue(all(capability.status == "unavailable" for capability in result.capabilities))
+                self.assertTrue(any(finding.kind == "unsupported" for finding in result.findings))
+
 
 if __name__ == "__main__":
     unittest.main()

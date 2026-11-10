@@ -95,6 +95,24 @@ class ContractIntegrityTests(unittest.TestCase):
             validate_documents(documents)
         self.assertIn("analysis.request_id belongs to a different run", raised.exception.errors)
 
+    def test_analysis_requires_artifact_closure_and_exact_checkpoint_metadata(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        filenames = ["run-state.json", "request.json", "evidence.json", "objective.json", "provenance.json", "analysis.json", "checkpoint.json"]
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        provenance = next(document for document in documents if document.get("contract") == "atg.provenance")
+        provenance["artifacts"] = []
+        with self.assertRaises(ContractIntegrityError) as missing:
+            validate_documents(documents)
+        self.assertTrue(any("missing provenance artifact" in error for error in missing.exception.errors))
+
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        checkpoint = next(document for document in documents if document.get("contract") == "atg.checkpoint")
+        checkpoint["kind"] = "analysis_review"
+        checkpoint["reviewed_artifact"]["digest"] = "sha256:" + "0" * 64
+        with self.assertRaises(ContractIntegrityError) as mismatch:
+            validate_documents(documents)
+        self.assertIn("analysis_review checkpoint artifact metadata differs from provenance", mismatch.exception.errors)
+
     def test_complete_evidence_graph_is_consistent(self):
         validate_documents(graph_documents())
 
