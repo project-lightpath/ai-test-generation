@@ -2,6 +2,7 @@ import json
 import http.client
 import pathlib
 import sys
+from datetime import datetime, timedelta, timezone
 from tempfile import TemporaryDirectory
 import threading
 import unittest
@@ -207,6 +208,10 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             },
         ))
 
+    def next_event_timestamp(self):
+        """Return a current timestamp safely after the admission transition."""
+        return (datetime.now(timezone.utc) + timedelta(seconds=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
     def test_process_boundary_creates_applies_and_reads_run_state(self):
         status, state = self.request(
             "POST",
@@ -224,7 +229,7 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             run_id="run-http",
             event_type="analysis_started",
             expected_revision=1,
-            occurred_at="2026-11-09T17:00:01Z",
+            occurred_at=self.next_event_timestamp(),
         )
         event_payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
         status, applied = self.request("POST", "/runs/run-http/events", event_payload)
@@ -257,7 +262,7 @@ class RunStateHTTPComponentTests(unittest.TestCase):
             run_id="run-http",
             event_type="analysis_started",
             expected_revision=1,
-            occurred_at="2026-11-09T17:00:01Z",
+            occurred_at=self.next_event_timestamp(),
         )
         event_payload = {"contract": "atg.run_event", "version": "1.0", **event.__dict__}
         self.request("POST", "/runs/run-http/events", event_payload)
