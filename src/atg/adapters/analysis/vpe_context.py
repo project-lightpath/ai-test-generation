@@ -85,6 +85,12 @@ class VPEAnalysisContextReplayAdapter:
             "version": revision if isinstance(revision, str) and revision else subject.revision,
             **({"digest": provenance.get("sourceFingerprint")} if provenance.get("sourceFingerprint") else {}),
         }
+        prepared_at = provenance.get("preparedAt")
+        if not isinstance(prepared_at, str) or not prepared_at:
+            findings.append(AnalysisFinding(
+                "finding-vpe-prepared-at", "incomplete", "VPE context has no valid preparation timestamp."
+            ))
+            return AnalyzerEvidenceResult(tuple(facts), (), capabilities, tuple(findings), ())
         evidence = {
             "contract": "atg.evidence",
             "version": "1.0",
@@ -96,7 +102,7 @@ class VPEAnalysisContextReplayAdapter:
                 "locator": f"urn:atg-replay:vpe-analysis-context:{context_id}",
                 "content_digest": digest,
             },
-            "observed_at": str(provenance.get("preparedAt", "1970-01-01T00:00:00Z")),
+            "observed_at": prepared_at,
             "content_digest": digest,
             "claims": claims,
             "artifacts": [],

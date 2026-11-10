@@ -53,6 +53,10 @@
           {
             "if": { "properties": { "disposition": { "const": "duplicate_candidate" } } },
             "then": { "required": ["duplicate_of"] }
+          },
+          {
+            "if": { "properties": { "disposition": { "const": "candidate" } } },
+            "then": { "properties": { "evidence_refs": { "minItems": 1 } } }
           }
         ]
       }
@@ -109,7 +113,15 @@
   "allOf": [
     {
       "if": { "properties": { "outcome": { "const": "validated" } } },
-      "then": { "required": ["profile_digest"] }
+      "then": { "required": ["profile_digest", "evidence_refs"], "properties": { "evidence_refs": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "needs_human_review" } } },
+      "then": { "required": ["evidence_refs"], "properties": { "evidence_refs": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "outcome": { "enum": ["blocked", "not_evaluable", "inconclusive", "stated_gap"] } } },
+      "then": { "required": ["gaps"], "properties": { "gaps": { "minItems": 1 } } }
     }
   ]
 }

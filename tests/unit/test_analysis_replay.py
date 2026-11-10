@@ -8,6 +8,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 from atg.adapters.analysis.java_facts import JavaSemanticFactsReplayAdapter  # noqa: E402
 from atg.adapters.analysis.vpe_context import VPEAnalysisContextReplayAdapter  # noqa: E402
 from atg.domain.repository_analysis import RepositorySubject  # noqa: E402
+from atg.domain.schema_validation import validate_contract_document  # noqa: E402
 
 
 FIXTURES = pathlib.Path(__file__).parents[2] / "fixtures" / "replay"
@@ -20,6 +21,8 @@ class AnalysisReplayTests(unittest.TestCase):
         result = VPEAnalysisContextReplayAdapter(document).collect(SUBJECT)
 
         self.assertEqual(result.evidence[0]["subject"]["version"], "abc123")
+        for document in result.evidence:
+            validate_contract_document(document, "evidence")
         self.assertTrue(any(fact.fact_id == "fact-vpe-framework" for fact in result.facts))
         self.assertEqual(
             {capability.capability: capability.status for capability in result.capabilities}["framework-metadata"],
@@ -33,6 +36,8 @@ class AnalysisReplayTests(unittest.TestCase):
         result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
 
         self.assertEqual(len(result.facts), 2)
+        for evidence in result.evidence:
+            validate_contract_document(evidence, "evidence")
         self.assertEqual(result.facts[0].source_path, "src/main/java/com/example/Resource.java")
         self.assertTrue(any(finding.kind == "ambiguous" for finding in result.findings))
         capabilities = {capability.capability: capability.status for capability in result.capabilities}
@@ -64,6 +69,31 @@ class AnalysisReplayTests(unittest.TestCase):
                 self.assertEqual(result.evidence, ())
                 self.assertTrue(all(capability.status == "unavailable" for capability in result.capabilities))
                 self.assertTrue(any(finding.kind == "unsupported" for finding in result.findings))
+
+    def test_replay_rejects_missing_timestamps_nonobjects_and_preserves_abstentions(self):
+        document = json.loads((FIXTURES / "java-semantic-call-facts.json").read_text())
+        document["runMetadata"].pop("preparedAt")
+        result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
+        self.assertEqual(result.evidence, ())
+        self.assertTrue(any(finding.finding_id.startswith("finding-java-prepared-at") for finding in result.findings))
+
+        document = json.loads((FIXTURES / "java-semantic-call-facts.json").read_text())
+        document["providerFacts"].append("not-an-object")
+        document["providerFacts"].append({
+            "id": "abstained-1", "caller": "a", "callee": "b", "relationshipType": "reflection",
+            "certainty": "unresolved", "status": "abstained", "evidence": [],
+        })
+        result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
+        self.assertTrue(any(finding.kind == "incomplete" for finding in result.findings))
+        abstained = next(evidence for evidence in result.evidence if "abstained" in evidence["claims"][0])
+        validate_contract_document(abstained, "evidence")
+        self.assertTrue(any("abstained" in limitation["description"] for limitation in abstained["limitations"]))
+
+        vpe = json.loads((FIXTURES / "vpe-analysis-context.json").read_text())
+        vpe["provenance"].pop("preparedAt")
+        result = VPEAnalysisContextReplayAdapter(vpe).collect(SUBJECT)
+        self.assertEqual(result.evidence, ())
+        self.assertIn("finding-vpe-prepared-at", {finding.finding_id for finding in result.findings})
 
 
 if __name__ == "__main__":

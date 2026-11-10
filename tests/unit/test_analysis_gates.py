@@ -6,6 +6,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.domain.repository_analysis import (  # noqa: E402
     AnalysisFinding,
+    CapabilityObservation,
     ContextFact,
     CoverageObservation,
     RepositoryContextResult,
@@ -68,7 +69,7 @@ class AnalysisGateTests(unittest.TestCase):
         )
         self.assertFalse(result.reviewable)
         self.assertEqual(result.outcome, "blocked")
-        self.assertTrue(any(finding.kind == "conflicting" for finding in result.findings))
+        self.assertEqual([(finding.finding_id, finding.kind) for finding in result.findings], [("gate-evidence-subject", "conflicting")])
 
     def test_uncited_fact_and_objective_block_analysis(self):
         objective = {"objective_id": "objective-1", "evidence_refs": []}
@@ -80,8 +81,9 @@ class AnalysisGateTests(unittest.TestCase):
             (objective,),
         )
         self.assertEqual(result.outcome, "blocked")
-        self.assertTrue(any("Fact fact-1" in finding.description for finding in result.findings))
-        self.assertTrue(any("Objective objective-1" in finding.description for finding in result.findings))
+        finding_pairs = {(finding.finding_id, finding.kind) for finding in result.findings}
+        self.assertIn(("gate-fact-citation-fact-1", "missing"), finding_pairs)
+        self.assertIn(("gate-objective-citation-objective-1", "missing"), finding_pairs)
 
     def test_runtime_coverage_without_execution_evidence_is_not_evaluable(self):
         result = evaluate_analysis(
@@ -95,7 +97,7 @@ class AnalysisGateTests(unittest.TestCase):
         )
         self.assertEqual(result.outcome, "not_evaluable")
         self.assertFalse(result.reviewable)
-        self.assertTrue(any("lacks execution evidence" in finding.description for finding in result.findings))
+        self.assertIn(("gate-runtime-coverage-1", "missing"), {(finding.finding_id, finding.kind) for finding in result.findings})
 
     def test_incomplete_discovery_remains_explicit_but_reviewable(self):
         result = evaluate_analysis(
@@ -115,6 +117,26 @@ class AnalysisGateTests(unittest.TestCase):
         result = evaluate_analysis(SUBJECT, manifest(evidence_refs=(), fact_refs=None), (), context())
         self.assertEqual(result.outcome, "not_evaluable")
         self.assertFalse(result.reviewable)
+
+    def test_required_unavailable_capability_and_stale_context_are_not_evaluable(self):
+        result = evaluate_analysis(
+            SUBJECT,
+            manifest(),
+            (evidence(),),
+            replace_context(
+                context(facts=(ContextFact("fact-1", "discovered", "A manifest exists", "pom.xml"),)),
+                capabilities=(CapabilityObservation("java-semantic-calls", "unavailable", True),),
+                findings=(AnalysisFinding("finding-stale", "stale", "The context is stale"),),
+            ),
+        )
+        self.assertEqual(result.outcome, "not_evaluable")
+        self.assertFalse(result.reviewable)
+
+
+def replace_context(value, **changes):
+    """Return a repository context with selected gate inputs replaced."""
+    from dataclasses import replace
+    return replace(value, **changes)
 
 
 if __name__ == "__main__":

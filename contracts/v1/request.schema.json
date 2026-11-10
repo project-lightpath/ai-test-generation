@@ -14,7 +14,7 @@
     "source": { "$ref": "common.schema.json#/$defs/source" },
     "repository": { "$ref": "common.schema.json#/$defs/identity" },
     "policy_decision": { "$ref": "common.schema.json#/$defs/identity" },
-    "objective_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "minItems": 1, "uniqueItems": true },
+    "objective_ids": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
     "requested_by": { "$ref": "common.schema.json#/$defs/id" },
     "mode": { "enum": ["analyze", "full"] },
     "constraints": { "type": "array", "items": { "type": "string" } },
@@ -29,7 +29,8 @@
         "properties": { "mode": { "const": "analyze" } },
         "required": ["mode"]
       },
-      "else": { "required": ["objective_ids"] }
+      "then": { "properties": { "objective_ids": { "type": "array" } } },
+      "else": { "required": ["objective_ids"], "properties": { "objective_ids": { "minItems": 1 } } }
     }
   ]
 }

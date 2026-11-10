@@ -138,6 +138,9 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             if not matching_analyses:
                 errors.append("analysis_review checkpoint artifact is not referenced by an analysis manifest")
             for analysis in matching_analyses:
+                expected_artifact_id = f"artifact-{analysis.get('analysis_id')}"
+                if reviewed.get("artifact_id") != expected_artifact_id or reviewed.get("media_type") != "application/vnd.atg.analysis+json":
+                    errors.append("analysis_review checkpoint must reference the analysis manifest artifact")
                 provenance = index.get(("atg.provenance", analysis.get("provenance_ref")))
                 artifacts = provenance.get("artifacts", []) if provenance is not None else []
                 if reviewed not in artifacts:

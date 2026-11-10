@@ -64,7 +64,7 @@ class ObjectiveCandidateTests(unittest.TestCase):
         candidate = result.candidates[0]
         self.assertEqual(candidate.disposition, "needs_evidence")
         self.assertEqual(candidate.expected_behavior_source, "unresolved")
-        self.assertTrue(any(finding.kind == "missing" for finding in result.findings))
+        self.assertEqual([(finding.finding_id, finding.kind) for finding in result.findings], [("finding-objective-evidence-objective-1", "missing")])
 
     def test_non_normative_driver_is_explicit_characterization(self):
         result = derive_objective_candidates(
@@ -76,6 +76,41 @@ class ObjectiveCandidateTests(unittest.TestCase):
         self.assertEqual(candidate.expected_behavior_source, "characterization")
         self.assertEqual(candidate.safety_flags, ("existing_tests_require_mapping",))
         self.assertEqual(candidate.existing_test_refs, ())
+
+    def test_malformed_objective_is_an_incomplete_finding(self):
+        result = derive_objective_candidates(({"objective_id": "objective-bad"},), context())
+        self.assertEqual(result.candidates, ())
+        self.assertEqual([(finding.finding_id, finding.kind) for finding in result.findings], [("finding-objective-1", "incomplete")])
+
+    def test_unsupported_kind_is_not_promoted(self):
+        result = derive_objective_candidates((objective("objective-unsupported", kind="unknown"),), context())
+        candidate = result.candidates[0]
+        self.assertEqual((candidate.disposition, candidate.validation_role), ("unsupported", "gap_analysis"))
+        self.assertEqual([(finding.finding_id, finding.kind) for finding in result.findings], [("finding-objective-kind-objective-unsupported", "unsupported")])
+
+    def test_vulnerability_driver_maps_to_exposure(self):
+        result = derive_objective_candidates((objective("objective-vulnerability", driver_type="vulnerability"),), context())
+        self.assertEqual(result.candidates[0].validation_role, "exposure")
+
+    def test_uncertain_evidence_cannot_make_vulnerability_objective_attributable(self):
+        evidence = ({
+            "evidence_id": "evidence-1",
+            "limitations": [{"code": "java-fact-uncertain", "description": "possible dispatch"}],
+        },)
+        result = derive_objective_candidates(
+            (objective("objective-vulnerability", driver_type="vulnerability"),), context(), evidence
+        )
+        self.assertEqual(result.candidates[0].expected_behavior_source, "unresolved")
+        self.assertEqual(result.candidates[0].disposition, "needs_evidence")
+
+    def test_gapped_candidates_preserve_limitations_and_are_not_duplicates(self):
+        first = objective("objective-gap-1", kind="behavior", driver_type="test_gap")
+        first["gaps"] = ["Expected behavior needs review."]
+        second = objective("objective-gap-2", kind="behavior", driver_type="test_gap")
+        second["gaps"] = ["Expected behavior needs review."]
+        result = derive_objective_candidates((first, second), context())
+        self.assertEqual([candidate.disposition for candidate in result.candidates], ["stated_gap", "stated_gap"])
+        self.assertEqual(result.candidates[0].limitations, ("Expected behavior needs review.",))
 
 
 if __name__ == "__main__":

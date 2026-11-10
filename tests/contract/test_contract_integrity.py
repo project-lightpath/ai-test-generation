@@ -113,6 +113,17 @@ class ContractIntegrityTests(unittest.TestCase):
             validate_documents(documents)
         self.assertIn("analysis_review checkpoint artifact metadata differs from provenance", mismatch.exception.errors)
 
+    def test_analysis_review_rejects_non_manifest_artifact(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        filenames = ["run-state.json", "request.json", "evidence.json", "objective.json", "provenance.json", "analysis.json", "checkpoint.json"]
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        checkpoint = next(document for document in documents if document.get("contract") == "atg.checkpoint")
+        checkpoint["kind"] = "analysis_review"
+        checkpoint["reviewed_artifact"]["artifact_id"] = "artifact-non-manifest"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("analysis_review checkpoint artifact is not referenced by an analysis manifest", raised.exception.errors)
+
     def test_complete_evidence_graph_is_consistent(self):
         validate_documents(graph_documents())
 

@@ -30,8 +30,12 @@ def _schemas() -> dict[str, dict]:
 def contract_asset_path(relative: str) -> Path:
     """Locate canonical contract assets in a checkout or installed distribution."""
     configured = os.environ.get("ATG_CONTRACT_ROOT")
+    if configured:
+        path = Path(configured) / relative
+        if not path.exists():
+            raise ContractValidationError("configured ATG contract assets are unavailable")
+        return path
     candidates = [
-        Path(configured) if configured else None,
         Path(__file__).parents[3] / "contracts",
         Path(sysconfig.get_path("data")) / "share" / "atg" / "contracts",
     ]

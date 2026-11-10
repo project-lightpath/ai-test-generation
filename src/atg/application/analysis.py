@@ -275,7 +275,10 @@ class AnalysisService:
                 event_type="analysis_blocked" if outcome == "blocked" else "analysis_inconclusive",
                 expected_revision=request.expected_revision + 1,
                 occurred_at=request.occurred_at,
-                reason="; ".join(record.manifest["gaps"]),  # type: ignore[arg-type]
+                reason=(
+                    "; ".join(record.manifest["gaps"])  # type: ignore[arg-type]
+                    or f"analysis outcome is {outcome}"
+                ),
             )
             checkpoint_event = None
         return self._store.record_analysis(record, start_event, outcome_event, checkpoint_event)
@@ -337,7 +340,7 @@ def _build_record(
                 ),
             ),
         )
-    derivation = derive_objective_candidates(objectives, context)
+    derivation = derive_objective_candidates(objectives, context, evidence)
     context = replace(context, findings=(*context.findings, *derivation.findings))
     evidence_by_fact = {
         fact.fact_id: tuple(fact.evidence_refs)

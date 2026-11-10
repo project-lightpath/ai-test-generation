@@ -282,7 +282,11 @@ def create_server(
                         validate_timestamp(body.get("occurred_at"), "occurred_at")
                     except ValueError as exc:
                         raise BadRequestError(str(exc)) from exc
-                    if not isinstance(body.get("expected_revision"), int) or isinstance(body.get("expected_revision"), bool):
+                    if (
+                        not isinstance(body.get("expected_revision"), int)
+                        or isinstance(body.get("expected_revision"), bool)
+                        or body["expected_revision"] < 0
+                    ):
                         raise BadRequestError("expected_revision must be a non-negative integer")
                     for field in ("objective_refs", "requested_capabilities"):
                         values = body.get(field, [])
@@ -308,9 +312,8 @@ def create_server(
                         )
                     except ValueError as exc:
                         raise BadRequestError(str(exc)) from exc
-                    existing = store.get_analysis(request.analysis_id)
                     result = analysis_service.analyze(request)
-                    self._respond(200 if existing is not None else 201, _analysis_document(result))
+                    self._respond(200 if result.duplicate else 201, _analysis_document(result))
                     return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):

@@ -204,6 +204,9 @@ class ContractSchemaTests(unittest.TestCase):
         request.pop("objective_ids")
         self._validator("request").validate(request)
 
+        request["objective_ids"] = []
+        self._validator("request").validate(request)
+
         request["mode"] = "full"
         with self.assertRaises(ValidationError):
             self._validator("request").validate(request)

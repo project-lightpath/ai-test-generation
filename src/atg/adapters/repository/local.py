@@ -88,8 +88,10 @@ class LocalRepositoryContextAdapter:
                     ))
                     continue
                 total_bytes += len(content)
-                content_hash.update(relative.encode("utf-8"))
-                content_hash.update(b"\0")
+                encoded_relative = os.fsencode(relative)
+                content_hash.update(len(encoded_relative).to_bytes(8, "big"))
+                content_hash.update(encoded_relative)
+                content_hash.update(len(content).to_bytes(8, "big"))
                 content_hash.update(content)
 
                 language = _LANGUAGES.get(path.suffix.lower())
@@ -172,8 +174,8 @@ def _is_test_file(name: str, relative: str) -> bool:
         lower.startswith("test_")
         or lower.endswith("_test.py")
         or lower.endswith("_test.go")
-        or lower.endswith("test.java")
-        or lower.endswith("tests.java")
+        or name.endswith("Test.java")
+        or name.endswith("Tests.java")
         or ".spec." in lower
         or ".test." in lower
         or "/test/" in f"/{relative.lower()}/"

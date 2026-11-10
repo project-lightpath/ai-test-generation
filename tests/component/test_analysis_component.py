@@ -132,6 +132,38 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         self.assertEqual(state["status"], "admitted")
         self.assertEqual(state["revision"], 1)
 
+    def test_analysis_get_unknown_id_returns_not_found(self):
+        status, document = self.request("GET", "/analyses/missing-analysis")
+        self.assertEqual(status, 404)
+        self.assertEqual(document, {"error": "analysis not found"})
+
+    def test_analysis_reuses_id_only_for_identical_inputs(self):
+        self.admit()
+        status, _ = self.request("POST", "/analyses", self.analysis_body())
+        self.assertEqual(status, 201)
+        body = self.analysis_body()
+        body["expected_revision"] = 2
+        status, document = self.request("POST", "/analyses", body)
+        self.assertEqual(status, 409)
+        self.assertIn("different inputs", document["error"])
+
+    def test_analysis_requires_prior_admission(self):
+        status, document = self.request("POST", "/analyses", self.analysis_body())
+        self.assertEqual(status, 409)
+        self.assertEqual(document, {"error": "analysis request does not match the admitted run"})
+
+    def test_analysis_rejects_malformed_json(self):
+        request = Request(
+            self.base + "/analyses",
+            data=b"not-json",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as malformed:
+            urlopen(request)
+        self.assertEqual(malformed.exception.code, 400)
+        malformed.exception.close()
+
 
 if __name__ == "__main__":
     unittest.main()

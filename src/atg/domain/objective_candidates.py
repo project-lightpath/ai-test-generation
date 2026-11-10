@@ -76,11 +76,22 @@ class ObjectiveDerivationResult:
 def derive_objective_candidates(
     objectives: Iterable[Mapping[str, object]],
     context: RepositoryContextResult,
+    evidence: Iterable[Mapping[str, object]] = (),
 ) -> ObjectiveDerivationResult:
     """Classify supplied objectives without inventing expected behavior."""
     candidates: list[ObjectiveCandidate] = []
     findings: list[AnalysisFinding] = []
     seen: dict[tuple[str, tuple[str, ...]], str] = {}
+    uncertain_evidence = {
+        str(document.get("evidence_id"))
+        for document in evidence
+        if isinstance(document, Mapping)
+        and any(
+            isinstance(limitation, Mapping) and limitation.get("code") == "java-fact-uncertain"
+            for limitation in document.get("limitations", [])
+            if isinstance(document.get("limitations"), list)
+        )
+    }
 
     for document in objectives:
         objective_id = document.get("objective_id")
@@ -98,9 +109,9 @@ def derive_objective_candidates(
         key = (_normalized_statement(statement), target_refs)
         duplicate_of = seen.get(key)
         role = _validation_role(document.get("kind"), document.get("driver_type"))
-        behavior_source = _behavior_source(document.get("driver_type"), evidence_refs)
+        behavior_source = _behavior_source(document.get("driver_type"), evidence_refs, uncertain_evidence)
         disposition = "candidate"
-        if not evidence_refs:
+        if not evidence_refs or behavior_source == "unresolved":
             disposition = "needs_evidence"
             findings.append(AnalysisFinding(
                 f"finding-objective-evidence-{objective_id}",
@@ -170,9 +181,15 @@ def _validation_role(kind: object, driver_type: object) -> str | None:
     }.get(kind)  # type: ignore[arg-type]
 
 
-def _behavior_source(driver_type: object, evidence_refs: tuple[str, ...]) -> str:
+def _behavior_source(
+    driver_type: object,
+    evidence_refs: tuple[str, ...],
+    uncertain_evidence: set[str] | None = None,
+) -> str:
     """Classify whether expected behavior is attributable or characterization."""
     if not evidence_refs:
+        return "unresolved"
+    if uncertain_evidence and set(evidence_refs).issubset(uncertain_evidence):
         return "unresolved"
     if driver_type in {"vulnerability", "bug_report", "contract_change", "dependency_change"}:
         return "attributable"

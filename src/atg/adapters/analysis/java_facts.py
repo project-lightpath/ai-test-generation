@@ -45,7 +45,6 @@ class JavaSemanticFactsReplayAdapter:
                 (
                     CapabilityObservation("java-semantic-calls", "unavailable"),
                     CapabilityObservation("java-framework-facts", "unavailable"),
-                    CapabilityObservation("test-discovery", "unavailable"),
                     CapabilityObservation("runtime-coverage", "unavailable"),
                 ),
                 (AnalysisFinding("finding-java-version", "unsupported", "Java semantic facts contract is unsupported."),),
@@ -69,6 +68,15 @@ class JavaSemanticFactsReplayAdapter:
                 status = str(value.get("status", "emitted"))
                 claim = str(value.get("claim") or _relationship_claim(value, certainty, status))
                 source_path, line = _source_location(value)
+                prepared_at = metadata.get("preparedAt")
+                if not isinstance(prepared_at, str) or not prepared_at:
+                    findings.append(AnalysisFinding(
+                        f"finding-java-prepared-at-{fact_digest}",
+                        "incomplete",
+                        "Java semantic fact has no valid preparation timestamp.",
+                        source_path,
+                    ))
+                    continue
                 evidence_documents.append(_evidence_document(
                     evidence_id, evidence_subject, document, value, source_path, line, claim, raw_digest
                 ))
@@ -90,7 +98,6 @@ class JavaSemanticFactsReplayAdapter:
         capabilities = (
             CapabilityObservation("java-semantic-calls", "available"),
             CapabilityObservation("java-framework-facts", "available" if framework_facts else "partial"),
-            CapabilityObservation("test-discovery", "unavailable", detail="Java semantic facts do not discover tests."),
             CapabilityObservation("runtime-coverage", "unavailable", detail="Java semantic facts do not prove execution coverage."),
         )
         for index, limitation in enumerate(document.get("limitations", []) if isinstance(document.get("limitations"), list) else [], 1):
@@ -129,10 +136,13 @@ def _evidence_document(evidence_id, subject, document, fact, source_path, line, 
             "locator": locator,
             "content_digest": raw_digest,
         },
-        "observed_at": str(metadata.get("preparedAt", "1970-01-01T00:00:00Z")),
+        "observed_at": metadata["preparedAt"],
         "claims": [claim],
         "artifacts": [],
-        "limitations": ([{"code": "java-fact-limitation", "description": str(fact["limitation"])}] if fact.get("limitation") else []),
+        "limitations": [
+            *([{"code": "java-fact-limitation", "description": str(fact["limitation"])}] if fact.get("limitation") else []),
+            *([{"code": "java-fact-uncertain", "description": f"certainty={fact.get('certainty', 'unresolved')}; status={fact.get('status', 'emitted')}"}] if fact.get("certainty") in {"possible", "unresolved"} or fact.get("status") == "abstained" else []),
+        ],
     }
 
 

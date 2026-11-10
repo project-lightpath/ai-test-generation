@@ -1,4 +1,6 @@
 import pathlib
+import os
+from unittest import mock
 import sys
 from tempfile import TemporaryDirectory
 import unittest
@@ -91,9 +93,30 @@ class RepositoryAnalysisTests(unittest.TestCase):
     def test_file_and_total_byte_limits_exclude_content(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            (root / "large.py").write_bytes(b"x" * 20)
+            (root / "first.py").write_bytes(b"x" * 6)
+            (root / "second.py").write_bytes(b"y" * 6)
             result = LocalRepositoryContextAdapter(max_file_bytes=10, max_total_bytes=10).collect(self.request(root))
-            self.assertTrue(any(finding.kind == "incomplete" and finding.path == "large.py" for finding in result.findings))
+            excluded = [finding.path for finding in result.findings if finding.kind == "incomplete"]
+            self.assertEqual(excluded, ["second.py"])
+            self.assertEqual(result.profile.scanned_file_count, 2)
+            self.assertTrue(result.profile.scanned_content_digest.startswith("sha256:"))
+
+    def test_java_test_filename_requires_case_boundary(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "Contest.java").write_text("class Contest {}\n")
+            (root / "ContestTest.java").write_text("class ContestTest {}\n")
+            result = LocalRepositoryContextAdapter().collect(self.request(root))
+            self.assertEqual([test.path for test in result.tests], ["ContestTest.java"])
+
+    def test_collect_handles_surrogate_escaped_filename(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            with mock.patch("atg.adapters.repository.local._enumerate_repository", return_value=(["bad-\udcff.py"], [])), mock.patch(
+                "atg.adapters.repository.local._read_bounded", return_value=b"value = 1\n"
+            ):
+                result = LocalRepositoryContextAdapter().collect(self.request(root))
+            self.assertEqual(result.profile.scanned_file_count, 1)
 
     def test_expected_content_digest_binds_materialized_bytes(self):
         with TemporaryDirectory() as directory:
