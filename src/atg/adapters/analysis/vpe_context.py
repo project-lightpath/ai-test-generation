@@ -94,11 +94,16 @@ class VPEAnalysisContextReplayAdapter:
             **({"digest": provenance.get("sourceFingerprint")} if provenance.get("sourceFingerprint") else {}),
         }
         prepared_at = provenance.get("preparedAt")
+        artifact = RawAnalysisArtifact(
+            f"artifact-vpe-context-{suffix}",
+            "application/vnd.project-lightpath.vpe-analysis-context+json",
+            document,
+        )
         if not isinstance(prepared_at, str) or not prepared_at:
             findings.append(AnalysisFinding(
                 "finding-vpe-prepared-at", "incomplete", "VPE context has no valid preparation timestamp."
             ))
-            return AnalyzerEvidenceResult(tuple(facts), (), capabilities, tuple(findings), ())
+            return AnalyzerEvidenceResult(tuple(facts), (), capabilities, tuple(findings), (artifact,))
         evidence = {
             "contract": "atg.evidence",
             "version": "1.0",
@@ -116,11 +121,6 @@ class VPEAnalysisContextReplayAdapter:
             "artifacts": [],
             "limitations": [{"code": "vpe-context-limitation", "description": item} for item in limitations if isinstance(item, str) and item],
         }
-        artifact = RawAnalysisArtifact(
-            f"artifact-vpe-context-{suffix}",
-            "application/vnd.project-lightpath.vpe-analysis-context+json",
-            document,
-        )
         return AnalyzerEvidenceResult(tuple(facts), (evidence,), capabilities, tuple(findings), (artifact,))
 
 

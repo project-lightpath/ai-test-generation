@@ -106,6 +106,10 @@ class ContractSchemaTests(unittest.TestCase):
                 document["reason"] = "analysis evidence gap"
                 self._validator("run-event").validate(document)
 
+                document["reason"] = ""
+                with self.assertRaises(ValidationError):
+                    self._validator("run-event").validate(document)
+
     def test_unsupported_positive_differential_is_rejected(self):
         with self.assertRaises(ValidationError):
             self._validator("signed-differential").validate(

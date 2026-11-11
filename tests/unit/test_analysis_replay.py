@@ -46,7 +46,7 @@ class AnalysisReplayTests(unittest.TestCase):
         self.assertTrue(any(finding.kind == "ambiguous" for finding in result.findings))
         capabilities = {capability.capability: capability.status for capability in result.capabilities}
         self.assertEqual(capabilities["java-semantic-calls"], "available")
-        self.assertEqual(capabilities["runtime-coverage"], "unavailable")
+        self.assertNotIn("runtime-coverage", capabilities)
         self.assertNotIn("execution", {evidence["category"] for evidence in result.evidence})
 
     def test_replay_subject_mismatch_remains_explicit(self):
@@ -140,7 +140,7 @@ class AnalysisReplayTests(unittest.TestCase):
         document["providerFacts"] = [{"caller": "a", "callee": "b", "relationshipType": "invokes", "certainty": "definite", "evidence": []}]
         result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
         self.assertEqual(result.facts[0].status, "abstained")
-        self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "available")
+        self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "unavailable")
         self.assertTrue(any(item["code"] == "java-fact-uncertain" for item in result.evidence[0]["limitations"]))
 
         document["providerFacts"] = []
@@ -170,7 +170,7 @@ class AnalysisReplayTests(unittest.TestCase):
         provider_facts = [fact for fact in result.facts if fact.fact_id.startswith("fact-java-provider-")]
         self.assertEqual(len(provider_facts), 1)
         self.assertEqual(provider_facts[0].status, "abstained")
-        self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "available")
+        self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "unavailable")
         self.assertEqual(len(result.artifacts), 1)
         self.assertTrue(any(finding.finding_id.startswith("finding-java-status-") for finding in result.findings))
 

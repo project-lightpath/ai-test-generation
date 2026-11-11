@@ -61,7 +61,9 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             require_run(document, "analysis.run_id")
             _require_related(document, "atg.request", document.get("request_id"), require, errors, "analysis.request_id")
             for evidence_id in document.get("evidence_refs", []):
-                require("atg.evidence", evidence_id, "analysis.evidence_refs")
+                evidence = require("atg.evidence", evidence_id, "analysis.evidence_refs")
+                if evidence is not None and evidence.get("subject") != document.get("subject"):
+                    errors.append("analysis.evidence_refs belongs to a different subject")
             for objective_id in document.get("objective_refs", []):
                 require("atg.objective", objective_id, "analysis.objective_refs")
             provenance = _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "analysis.provenance_ref")

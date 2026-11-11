@@ -5,15 +5,16 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
+import threading
 from typing import Mapping
 
 from atg.domain.repository_analysis import AnalysisFinding, CapabilityObservation, RepositoryContextResult, RepositorySubject
 from atg.domain.objective_candidates import derive_objective_candidates
-from atg.domain.run_state import RunEvent, validate_identifier, validate_timestamp
+from atg.domain.run_state import InvalidTransitionError, RunEvent, StaleEventError, validate_identifier, validate_timestamp
 from atg.domain.schema_validation import ContractValidationError, validate_contract_document
 from atg.gates.analysis import evaluate_analysis
 from atg.ports.analysis import AnalysisStore
-from atg.ports.analyzer import RawAnalysisArtifact, RepositoryAnalyzerPort
+from atg.ports.analyzer import AnalyzerEvidenceResult, RawAnalysisArtifact, RepositoryAnalyzerPort
 from atg.ports.repository import RepositoryContextPort, RepositoryContextRequest
 
 
@@ -149,9 +150,15 @@ class AnalysisService:
         self._store = store
         self._repository_context = repository_context
         self._analyzers = analyzers
+        self._analysis_lock = threading.RLock()
 
     def analyze(self, request: AnalysisRequest) -> AnalysisRecord:
         """Run or replay one idempotent Analyze-stage request."""
+        with self._analysis_lock:
+            return self._analyze(request)
+
+    def _analyze(self, request: AnalysisRequest) -> AnalysisRecord:
+        """Run one Analyze request while local discovery is serialized."""
         digest = request.digest()
         existing = self._store.get_analysis(request.analysis_id)
         if existing is not None:
@@ -162,6 +169,15 @@ class AnalysisService:
         admission = self._store.get_admission_for_run(request.run_id)
         if admission is None or admission.request_id != request.request_id:
             raise AnalysisConflictError("analysis request does not match the admitted run")
+        if admission.status != "admitted":
+            raise AnalysisConflictError("analysis requires an admitted request")
+        state = self._store.get_run(request.run_id)
+        if state.revision != request.expected_revision:
+            raise StaleEventError(
+                f"event expects revision {request.expected_revision}, current revision is {state.revision}"
+            )
+        if state.status != "admitted":
+            raise InvalidTransitionError(f"analysis cannot start from {state.status}")
         admitted_repository = admission.identities.get("repository")
         if admitted_repository is None:
             raise AnalysisConflictError("admission does not contain a repository identity")
@@ -189,7 +205,16 @@ class AnalysisService:
         analyzer_artifacts: list[RawAnalysisArtifact] = []
         producer_identities: list[Mapping[str, object]] = [self._repository_context.producer_identity]
         for index, analyzer in enumerate(self._analyzers, 1):
-            if not set(analyzer.capabilities).issubset(admission.admitted_capabilities):
+            declared_capabilities = set(analyzer.capabilities)
+            if not declared_capabilities:
+                context = replace(
+                    context,
+                    findings=(*context.findings, AnalysisFinding(
+                        f"finding-analyzer-declaration-{index}", "conflicting", "Analyzer declared no capabilities."
+                    )),
+                )
+                continue
+            if not declared_capabilities.issubset(admission.admitted_capabilities):
                 continue
             producer_identities.append(analyzer.producer_identity)
             try:
@@ -203,6 +228,14 @@ class AnalysisService:
                     capabilities=(*context.capabilities, CapabilityObservation(f"analyzer-{index}", "unavailable")),
                 )
                 continue
+            if not isinstance(result, AnalyzerEvidenceResult):
+                context = replace(
+                    context,
+                    findings=(*context.findings, AnalysisFinding(
+                        f"finding-analyzer-result-{index}", "conflicting", "Analyzer returned an invalid result container."
+                    )),
+                )
+                continue
             try:
                 for document in result.evidence:
                     validate_contract_document(document, "evidence")
@@ -213,6 +246,16 @@ class AnalysisService:
                         f"finding-analyzer-contract-{index}", "conflicting", "Analyzer emitted invalid canonical evidence."
                     )),
                     capabilities=(*context.capabilities, CapabilityObservation(f"analyzer-{index}", "unavailable")),
+                )
+                continue
+            returned_capabilities = {capability.capability for capability in result.capabilities}
+            if not returned_capabilities.issubset(declared_capabilities):
+                context = replace(
+                    context,
+                    findings=(*context.findings, AnalysisFinding(
+                        f"finding-analyzer-capability-{index}", "conflicting",
+                        "Analyzer returned undeclared capabilities.",
+                    )),
                 )
                 continue
             context = replace(
@@ -321,7 +364,7 @@ def _build_record(
                 *(
                     AnalysisFinding(
                         f"finding-objective-reference-{objective_ref}",
-                        "missing",
+                        "conflicting",
                         f"Referenced objective {objective_ref} was not supplied as a materialized objective document.",
                     )
                     for objective_ref in request.objective_refs
@@ -367,7 +410,7 @@ def _build_record(
     )
     analysis_artifact_id = f"artifact-{request.analysis_id}"
     provenance_id = f"provenance-{request.analysis_id}"
-    objective_refs = tuple(sorted(set(request.objective_refs) | {str(document["objective_id"]) for document in objectives}))
+    objective_refs = tuple(sorted(str(document["objective_id"]) for document in objectives))
     manifest: dict[str, object] = {
         "contract": "atg.analysis",
         "version": "1.0",
@@ -424,11 +467,15 @@ def _build_record(
             }
             for finding in context.findings
         ],
-        "assumptions": [
-            "Materialized content matched the admitted subject digest."
-            if request.subject.content_digest
-            else "The materializer attested the repository revision; analyzed bytes are identified by profile_digest."
-        ],
+        "assumptions": (
+            []
+            if any(finding.finding_id == "finding-materialization-digest" for finding in context.findings)
+            else [
+                "Materialized content matched the admitted subject digest."
+                if request.subject.content_digest
+                else "The materializer attested the repository revision; analyzed bytes are identified by profile_digest."
+            ]
+        ),
         "gaps": [finding.description for finding in context.findings],
         "limitations": [],
     }
@@ -574,8 +621,28 @@ def _require_capabilities(
     requested: tuple[str, ...],
 ) -> RepositoryContextResult:
     """Mark requested capabilities as required and preserve missing ones explicitly."""
-    observations = {capability.capability: capability for capability in context.capabilities}
     findings = list(context.findings)
+    observations: dict[str, CapabilityObservation] = {}
+    rank = {"available": 0, "partial": 1, "unavailable": 2}
+    for observation in context.capabilities:
+        existing = observations.get(observation.capability)
+        if existing is None:
+            observations[observation.capability] = observation
+            continue
+        worst = observation if rank[observation.status] > rank[existing.status] else existing
+        details = sorted({detail for detail in (existing.detail, observation.detail) if detail})
+        observations[observation.capability] = CapabilityObservation(
+            observation.capability,
+            worst.status,
+            existing.required or observation.required,
+            "; ".join(details) or None,
+        )
+        if observation.status != existing.status:
+            findings.append(AnalysisFinding(
+                f"finding-capability-conflict-{observation.capability}",
+                "conflicting",
+                f"Capability {observation.capability} had conflicting availability observations.",
+            ))
     for capability in requested:
         existing = observations.get(capability)
         if existing is None:
@@ -666,5 +733,43 @@ def validate_analysis_record(record: AnalysisRecord) -> None:
         reviewed = record.checkpoint.get("reviewed_artifact")
         if record.checkpoint.get("run_id") != record.manifest.get("run_id"):
             raise ContractValidationError("analysis checkpoint belongs to a different run")
-        if not isinstance(reviewed, Mapping) or artifacts.get(reviewed.get("artifact_id")) != reviewed:
+        expected_artifact_id = f"artifact-{record.manifest.get('analysis_id')}"
+        if (
+            not isinstance(reviewed, Mapping)
+            or reviewed.get("artifact_id") != expected_artifact_id
+            or reviewed.get("media_type") != "application/vnd.atg.analysis+json"
+            or artifacts.get(expected_artifact_id) != reviewed
+        ):
             raise ContractValidationError("analysis checkpoint artifact binding mismatch")
+
+    evidence_by_id = {
+        document.get("evidence_id"): document
+        for document in record.evidence
+        if isinstance(document.get("evidence_id"), str)
+    }
+    objective_by_id = {
+        document.get("objective_id"): document
+        for document in record.objectives
+        if isinstance(document.get("objective_id"), str)
+    }
+    manifest_evidence = set(record.manifest.get("evidence_refs", []))
+    manifest_objectives = set(record.manifest.get("objective_refs", []))
+    if not manifest_evidence.issubset(evidence_by_id):
+        raise ContractValidationError("analysis references missing evidence documents")
+    if not manifest_objectives.issubset(objective_by_id):
+        raise ContractValidationError("analysis references missing objective documents")
+    expected_subject = record.manifest.get("subject")
+    for evidence_id in manifest_evidence:
+        if evidence_by_id[evidence_id].get("subject") != expected_subject:
+            raise ContractValidationError("analysis evidence belongs to a different subject")
+    for fact in record.manifest.get("fact_summary", []):
+        if not set(fact.get("evidence_refs", [])).issubset(evidence_by_id):
+            raise ContractValidationError("analysis fact references missing evidence")
+    for finding in record.manifest.get("findings", []):
+        if not set(finding.get("evidence_refs", [])).issubset(evidence_by_id):
+            raise ContractValidationError("analysis finding references missing evidence")
+    for candidate in record.manifest.get("objective_candidates", []):
+        if candidate.get("objective_ref") not in objective_by_id:
+            raise ContractValidationError("analysis candidate references a missing objective")
+        if not set(candidate.get("evidence_refs", [])).issubset(evidence_by_id):
+            raise ContractValidationError("analysis candidate references missing evidence")

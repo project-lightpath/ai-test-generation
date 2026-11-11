@@ -18,10 +18,11 @@ from atg.application.admission import AdmissionRequest, AdmissionService, CheckR
 from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService  # noqa: E402
 from atg.domain.schema_validation import ContractValidationError  # noqa: E402
 from atg.domain.contract_integrity import validate_documents  # noqa: E402
-from atg.domain.repository_analysis import RepositorySubject  # noqa: E402
+from atg.domain.repository_analysis import CapabilityObservation, RepositorySubject  # noqa: E402
 from atg.domain.repository_analysis import AnalysisFinding  # noqa: E402
 from atg.domain.run_state import StaleEventError  # noqa: E402
 from atg.ports.repository import RepositoryContextRequest  # noqa: E402
+from atg.ports.analyzer import AnalyzerEvidenceResult  # noqa: E402
 
 
 CONTRACT_ROOT = pathlib.Path(__file__).parents[2] / "contracts" / "v1"
@@ -40,6 +41,14 @@ class PassingCheck:
     def evaluate(self, request):
         """Return one deterministic passing admission check."""
         return CheckResult("fixed", True, "pass")
+
+
+class BlockingCheck:
+    """Return a deterministic blocking admission check."""
+
+    def evaluate(self, request):
+        """Block admission before Analyze can inspect repository content."""
+        return CheckResult("fixed", True, "fail", "blocked for test")
 
 
 class UnauthorizedContextAdapter:
@@ -61,6 +70,29 @@ class FailingContextAdapter:
     def collect(self, request):
         """Raise a deterministic repository failure."""
         raise OSError("private local path")
+
+
+class CapabilityAnalyzer:
+    """Return one configured capability observation for aggregation tests."""
+
+    capabilities = ("semantic",)
+    producer_identity = {"kind": "analysis-adapter", "id": "capability-test", "version": "1"}
+
+    def __init__(self, status):
+        """Configure the emitted availability status."""
+        self._status = status
+
+    def collect(self, subject):
+        """Return an otherwise empty analyzer result."""
+        return AnalyzerEvidenceResult((), (), (CapabilityObservation("semantic", self._status),), (), ())
+
+
+class UndeclaredCapabilityAnalyzer(CapabilityAnalyzer):
+    """Return output outside the adapter's declared capability set."""
+
+    def collect(self, subject):
+        """Return an undeclared capability observation."""
+        return AnalyzerEvidenceResult((), (), (CapabilityObservation("undeclared", "available"),), (), ())
 
 
 def create_repository(root: pathlib.Path) -> None:
@@ -309,24 +341,74 @@ class AnalysisServiceTests(unittest.TestCase):
             database = pathlib.Path(directory) / "state.sqlite3"
             store = SQLiteRunStateStore(database)
             admit(store, root)
-            AnalysisService(store, LocalRepositoryContextAdapter()).analyze(analysis_request(root))
+            base_request = analysis_request(root)
+            request = analysis_request(
+                root,
+                supplied_evidence=(supplied_evidence(content_digest=base_request.subject.content_digest),),
+                supplied_objectives=(supplied_objective(),),
+            )
+            AnalysisService(store, LocalRepositoryContextAdapter()).analyze(request)
             store.close()
 
             connection = sqlite3.connect(database)
             row = connection.execute("SELECT bundle_json FROM analyses WHERE analysis_id = 'analysis-1'").fetchone()
             bundle = json.loads(row[0])
-            bundle["checkpoint"]["reviewed_artifact"]["digest"] = "sha256:" + "0" * 64
+            original = json.dumps(bundle, sort_keys=True)
+            connection.close()
+
+            mutations = {
+                "checkpoint digest": lambda value: value["checkpoint"]["reviewed_artifact"].update({"digest": "sha256:" + "0" * 64}),
+                "wrong checkpoint artifact": lambda value: value["checkpoint"].update({"reviewed_artifact": value["artifacts"][0]["artifact"]}),
+                "missing evidence": lambda value: value.update({"evidence": []}),
+                "missing objectives": lambda value: value.update({"objectives": []}),
+            }
+            for label, mutate in mutations.items():
+                with self.subTest(label=label):
+                    value = json.loads(original)
+                    mutate(value)
+                    connection = sqlite3.connect(database)
+                    connection.execute(
+                        "UPDATE analyses SET bundle_json = ? WHERE analysis_id = 'analysis-1'",
+                        (json.dumps(value, sort_keys=True),),
+                    )
+                    connection.commit()
+                    connection.close()
+                    restarted = SQLiteRunStateStore(database)
+                    with self.assertRaises(ContractValidationError):
+                        restarted.get_analysis("analysis-1")
+                    restarted.close()
+
+            connection = sqlite3.connect(database)
             connection.execute(
-                "UPDATE analyses SET bundle_json = ? WHERE analysis_id = 'analysis-1'",
-                (json.dumps(bundle, sort_keys=True),),
+                "UPDATE analyses SET bundle_json = ?, request_digest = ? WHERE analysis_id = 'analysis-1'",
+                (original, "sha256:" + "0" * 64),
             )
             connection.commit()
             connection.close()
-
             restarted = SQLiteRunStateStore(database)
             with self.assertRaises(ContractValidationError):
                 restarted.get_analysis("analysis-1")
             restarted.close()
+
+    def test_blocked_admission_does_not_trigger_repository_discovery(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            request = analysis_request(root)
+            store = SQLiteRunStateStore()
+            AdmissionService(store, (BlockingCheck(),)).admit(AdmissionRequest(
+                request_id="request-1",
+                run_id="run-1",
+                submitted_at="2026-11-09T17:00:00Z",
+                idempotency_key="blocked-admission",
+                payload={"repository": {
+                    "kind": "git-repository", "id": request.subject.repository_id,
+                    "version": request.subject.revision, "digest": request.subject.content_digest,
+                }},
+            ))
+            with self.assertRaises(AnalysisConflictError):
+                AnalysisService(store, FailingContextAdapter()).analyze(request)
+            self.assertEqual(store.get_run("run-1").status, "blocked")
+            store.close()
 
     def test_analysis_capabilities_must_be_admitted(self):
         with TemporaryDirectory() as directory:
@@ -339,6 +421,38 @@ class AnalysisServiceTests(unittest.TestCase):
                     analysis_request(root, requested_capabilities=("java-semantic-calls",))
                 )
             self.assertEqual(store.get_run("run-1").status, "admitted")
+            store.close()
+
+    def test_analyzer_outputs_are_declared_and_capabilities_aggregate_conservatively(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store = SQLiteRunStateStore()
+            admit(store, root, ("semantic",))
+            request = analysis_request(root, requested_capabilities=("semantic",))
+
+            record = AnalysisService(
+                store,
+                LocalRepositoryContextAdapter(),
+                (CapabilityAnalyzer("available"), CapabilityAnalyzer("unavailable")),
+            ).analyze(request)
+            semantic = next(item for item in record.manifest["capabilities"] if item["capability"] == "semantic")
+            self.assertEqual(semantic["status"], "unavailable")
+            self.assertEqual(record.manifest["outcome"], "blocked")
+            store.close()
+
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store = SQLiteRunStateStore()
+            admit(store, root, ("semantic",))
+            record = AnalysisService(
+                store,
+                LocalRepositoryContextAdapter(),
+                (UndeclaredCapabilityAnalyzer("available"),),
+            ).analyze(analysis_request(root, requested_capabilities=("semantic",)))
+            self.assertEqual(record.manifest["outcome"], "blocked")
+            self.assertTrue(any("undeclared capabilities" in gap for gap in record.manifest["gaps"]))
             store.close()
 
     def test_unadmitted_configured_analyzer_is_not_invoked_or_persisted(self):
@@ -589,7 +703,7 @@ class AnalysisServiceTests(unittest.TestCase):
             store = SQLiteRunStateStore()
             admit(store, root)
             with self.assertRaises(StaleEventError):
-                service = AnalysisService(store, LocalRepositoryContextAdapter())
+                service = AnalysisService(store, FailingContextAdapter())
                 service.analyze(analysis_request(root, expected_revision=0))
             store.close()
 

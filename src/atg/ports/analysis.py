@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Protocol, TYPE_CHECKING
 
 from atg.application.admission import AdmissionResult
-from atg.domain.run_state import RunEvent, TransitionResult
+from atg.domain.run_state import RunEvent, RunState, TransitionResult
 
 if TYPE_CHECKING:
     from atg.application.analysis import AnalysisRecord
@@ -16,6 +16,9 @@ class AnalysisStore(Protocol):
 
     def get_analysis(self, analysis_id: str) -> "AnalysisRecord | None":
         """Return a previously completed analysis by stable identity."""
+
+    def get_run(self, run_id: str) -> RunState:
+        """Return the current durable run projection."""
 
     def record_analysis(
         self,

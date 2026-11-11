@@ -17,7 +17,7 @@
     "checkpoint_kind": { "enum": ["analysis_review", "plan_review", "code_review", "execution_review", "quality_review"] },
     "decision": { "enum": ["approved", "rejected", "blocked", "stated_gap"] },
     "supersedes": { "$ref": "common.schema.json#/$defs/id" },
-    "reason": { "type": "string" },
+    "reason": { "type": "string", "minLength": 1 },
     "actor_id": { "$ref": "common.schema.json#/$defs/id" },
     "actor_role": { "type": "string", "minLength": 1 },
     "authorization_ref": { "$ref": "common.schema.json#/$defs/id" },

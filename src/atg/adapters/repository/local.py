@@ -218,12 +218,20 @@ def _enumerate_repository(root_descriptor: int, max_files: int) -> tuple[list[st
     """Enumerate repository files through no-follow directory descriptors."""
     files: list[str] = []
     findings: list[AnalysisFinding] = []
-    stack = [(os.dup(root_descriptor), "")]
+    stack = [""]
     entries_seen = 0
     entry_limit = max_files * 4
     stopped = False
     while stack and not stopped:
-        descriptor, prefix = stack.pop()
+        prefix = stack.pop()
+        try:
+            descriptor = _open_directory(root_descriptor, prefix)
+        except OSError:
+            findings.append(AnalysisFinding(
+                f"finding-directory-read-{len(findings) + 1}", "incomplete",
+                "Repository directory could not be opened safely.", prefix or ".",
+            ))
+            continue
         try:
             with os.scandir(descriptor) as iterator:
                 entries = []
@@ -247,19 +255,7 @@ def _enumerate_repository(root_descriptor: int, max_files: int) -> tuple[list[st
                         "Symbolic links are not followed during repository discovery.", relative,
                     ))
                 elif entry.is_dir(follow_symlinks=False):
-                    try:
-                        child = os.open(
-                            entry.name,
-                            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-                            dir_fd=descriptor,
-                        )
-                    except OSError:
-                        findings.append(AnalysisFinding(
-                            f"finding-directory-read-{len(findings) + 1}", "incomplete",
-                            "Repository directory could not be opened safely.", relative,
-                        ))
-                    else:
-                        stack.append((child, relative))
+                    stack.append(relative)
                 elif entry.is_file(follow_symlinks=False):
                     if len(files) >= max_files:
                         findings.append(AnalysisFinding(
@@ -271,9 +267,25 @@ def _enumerate_repository(root_descriptor: int, max_files: int) -> tuple[list[st
                     files.append(relative)
         finally:
             os.close(descriptor)
-    for descriptor, _ in stack:
-        os.close(descriptor)
     return sorted(files), findings
+
+
+def _open_directory(root_descriptor: int, relative: str) -> int:
+    """Open one repository directory lazily through no-follow descriptors."""
+    directory = os.dup(root_descriptor)
+    try:
+        for part in filter(None, relative.split("/")):
+            child = os.open(
+                part,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory,
+            )
+            os.close(directory)
+            directory = child
+        return directory
+    except Exception:
+        os.close(directory)
+        raise
 
 
 def _read_bounded(root_descriptor: int, relative: str, limit: int) -> bytes | None:

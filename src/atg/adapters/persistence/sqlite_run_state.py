@@ -126,12 +126,19 @@ class SQLiteRunStateStore:
         """Load a completed analysis bundle by stable identity."""
         with self._lock:
             row = self._connection.execute(
-                "SELECT bundle_json FROM analyses WHERE analysis_id = ?", (analysis_id,)
+                "SELECT analysis_id, run_id, request_digest, bundle_json FROM analyses WHERE analysis_id = ?", (analysis_id,)
             ).fetchone()
         if row is None:
             return None
         try:
-            return AnalysisRecord.from_storage_document(json.loads(row["bundle_json"]))
+            record = AnalysisRecord.from_storage_document(json.loads(row["bundle_json"]))
+            if (
+                row["analysis_id"] != record.manifest.get("analysis_id")
+                or row["run_id"] != record.manifest.get("run_id")
+                or row["request_digest"] != record.request_digest
+            ):
+                raise ContractValidationError("persisted analysis row metadata differs from bundle")
+            return record
         except ContractValidationError:
             raise
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:

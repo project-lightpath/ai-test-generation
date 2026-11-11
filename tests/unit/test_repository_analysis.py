@@ -1,5 +1,6 @@
 import pathlib
 import os
+import resource
 from unittest import mock
 import sys
 from tempfile import TemporaryDirectory
@@ -91,15 +92,18 @@ class RepositoryAnalysisTests(unittest.TestCase):
             self.assertEqual(result.profile.scanned_file_count, 2)
 
     def test_file_and_total_byte_limits_exclude_content(self):
-        with TemporaryDirectory() as directory:
+        with TemporaryDirectory() as directory, TemporaryDirectory() as expected_directory:
             root = pathlib.Path(directory)
             (root / "first.py").write_bytes(b"x" * 6)
             (root / "second.py").write_bytes(b"y" * 6)
             result = LocalRepositoryContextAdapter(max_file_bytes=10, max_total_bytes=10).collect(self.request(root))
+            expected_root = pathlib.Path(expected_directory)
+            (expected_root / "first.py").write_bytes(b"x" * 6)
+            expected = LocalRepositoryContextAdapter(max_file_bytes=10, max_total_bytes=10).collect(self.request(expected_root))
             excluded = [finding.path for finding in result.findings if finding.kind == "incomplete"]
             self.assertEqual(excluded, ["second.py"])
             self.assertEqual(result.profile.scanned_file_count, 2)
-            self.assertTrue(result.profile.scanned_content_digest.startswith("sha256:"))
+            self.assertEqual(result.profile.scanned_content_digest, expected.profile.scanned_content_digest)
 
     def test_java_test_filename_requires_case_boundary(self):
         with TemporaryDirectory() as directory:
@@ -141,6 +145,23 @@ class RepositoryAnalysisTests(unittest.TestCase):
     def test_domain_rejects_escaping_citation_paths(self):
         with self.assertRaises(ValueError):
             ContextFact("fact-1", "discovered", "unsafe", "../outside")
+
+    def test_wide_repository_does_not_exhaust_directory_descriptors(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for index in range(100):
+                child = root / f"module-{index:03d}"
+                child.mkdir()
+                (child / "source.py").write_text("value = 1\n")
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            constrained = 64 if hard == resource.RLIM_INFINITY else min(64, hard)
+            resource.setrlimit(resource.RLIMIT_NOFILE, (constrained, hard))
+            try:
+                result = LocalRepositoryContextAdapter(max_files=200).collect(self.request(root))
+            finally:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+            self.assertEqual(result.profile.scanned_file_count, 100)
+            self.assertFalse(any(finding.finding_id.startswith("finding-directory-read") for finding in result.findings))
 
 
 if __name__ == "__main__":

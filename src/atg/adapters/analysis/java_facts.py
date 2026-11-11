@@ -45,7 +45,6 @@ class JavaSemanticFactsReplayAdapter:
                 (
                     CapabilityObservation("java-semantic-calls", "unavailable"),
                     CapabilityObservation("java-framework-facts", "unavailable"),
-                    CapabilityObservation("runtime-coverage", "unavailable"),
                 ),
                 (AnalysisFinding("finding-java-version", "unsupported", "Java semantic facts contract is unsupported."),),
                 (artifact,),
@@ -75,6 +74,13 @@ class JavaSemanticFactsReplayAdapter:
                 seen_fact_ids.add(fact_id)
                 evidence_id = f"evidence-java-{fact_set}-{fact_digest}"
                 certainty = str(value.get("certainty", "unresolved"))
+                if certainty not in {"definite", "possible", "unresolved"}:
+                    findings.append(AnalysisFinding(
+                        f"finding-java-certainty-value-{fact_digest}",
+                        "unsupported",
+                        f"Java analyzer fact has unsupported certainty {certainty}.",
+                    ))
+                    continue
                 status = str(value.get("status", "abstained"))
                 if status not in {"emitted", "abstained"}:
                     findings.append(AnalysisFinding(
@@ -126,13 +132,16 @@ class JavaSemanticFactsReplayAdapter:
         capabilities = (
             CapabilityObservation(
                 "java-semantic-calls",
-                "available" if any(fact_id.startswith("fact-java-provider-") for fact_id in (fact.fact_id for fact in facts)) else "unavailable",
+                "available" if any(
+                    fact.fact_id.startswith("fact-java-provider-") and fact.status == "emitted" for fact in facts
+                ) else "unavailable",
             ),
             CapabilityObservation(
                 "java-framework-facts",
-                "available" if any(fact_id.startswith("fact-java-framework-") for fact_id in (fact.fact_id for fact in facts)) else "partial",
+                "available" if any(
+                    fact.fact_id.startswith("fact-java-framework-") and fact.status == "emitted" for fact in facts
+                ) else "partial",
             ),
-            CapabilityObservation("runtime-coverage", "unavailable", detail="Java semantic facts do not prove execution coverage."),
         )
         for index, limitation in enumerate(document.get("limitations", []) if isinstance(document.get("limitations"), list) else [], 1):
             if isinstance(limitation, str) and limitation:
