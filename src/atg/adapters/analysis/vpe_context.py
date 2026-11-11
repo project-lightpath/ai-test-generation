@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Mapping
 
 from atg.domain.repository_analysis import AnalysisFinding, CapabilityObservation, ContextFact, RepositorySubject
@@ -72,11 +73,18 @@ class VPEAnalysisContextReplayAdapter:
 
         metadata = document.get("frameworkMetadata") if isinstance(document.get("frameworkMetadata"), list) else []
         metadata_statuses = {item.get("status") for item in metadata if isinstance(item, Mapping)}
-        metadata_status = "unavailable" if not metadata else "partial" if "not_captured" in metadata_statuses else "available"
+        invalid_metadata = any(status not in {"observed", "not_captured"} for status in metadata_statuses)
+        if invalid_metadata:
+            findings.append(AnalysisFinding("finding-vpe-framework-metadata", "unsupported", "VPE framework metadata has an unsupported status."))
+        metadata_status = "unavailable" if invalid_metadata or not metadata else "partial" if "not_captured" in metadata_statuses else "available"
+        build_evidence = document.get("buildEvidence")
+        valid_build = isinstance(build_evidence, Mapping) and isinstance(build_evidence.get("tool"), str) and isinstance(build_evidence.get("fingerprint"), str)
+        dependency_fingerprint = provenance.get("dependencyFingerprint")
+        valid_dependency = isinstance(dependency_fingerprint, str) and bool(re.fullmatch(r"sha256:[0-9a-f]{64}", dependency_fingerprint))
         capabilities = (
             CapabilityObservation("repository-preparation", "available"),
-            CapabilityObservation("build-context", "available" if document.get("buildEvidence") else "unavailable"),
-            CapabilityObservation("dependency-context", "available" if provenance.get("dependencyFingerprint") else "unavailable"),
+            CapabilityObservation("build-context", "available" if valid_build else "unavailable"),
+            CapabilityObservation("dependency-context", "available" if valid_dependency else "unavailable"),
             CapabilityObservation("framework-metadata", metadata_status),
         )
         evidence_subject = {

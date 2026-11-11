@@ -82,12 +82,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["fact_id", "origin", "claim", "evidence_refs"],
+        "required": ["fact_id", "origin", "claim", "evidence_refs", "certainty", "status"],
         "properties": {
           "fact_id": { "$ref": "common.schema.json#/$defs/id" },
           "origin": { "enum": ["supplied", "discovered", "inferred"] },
           "claim": { "type": "string", "minLength": 1 },
-          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "minItems": 1, "uniqueItems": true }
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "minItems": 1, "uniqueItems": true },
+          "certainty": { "enum": ["definite", "possible", "unresolved"] },
+          "status": { "enum": ["emitted", "abstained"] }
         }
       }
     },

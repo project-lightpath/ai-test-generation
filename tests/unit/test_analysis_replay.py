@@ -7,6 +7,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.adapters.analysis.java_facts import JavaSemanticFactsReplayAdapter, _digest  # noqa: E402
 from atg.adapters.analysis.vpe_context import VPEAnalysisContextReplayAdapter  # noqa: E402
+from atg.domain.objective_candidates import derive_objective_candidates  # noqa: E402
+from atg.domain.repository_analysis import RepositoryContextResult, RepositoryProfile  # noqa: E402
 from atg.domain.repository_analysis import RepositorySubject  # noqa: E402
 from atg.domain.schema_validation import validate_contract_document  # noqa: E402
 
@@ -100,6 +102,62 @@ class AnalysisReplayTests(unittest.TestCase):
         result = VPEAnalysisContextReplayAdapter(vpe).collect(SUBJECT)
         self.assertEqual(result.evidence, ())
         self.assertIn("finding-vpe-prepared-at", {finding.finding_id for finding in result.findings})
+
+    def test_missing_java_certainty_marks_evidence_uncertain_and_objective_needs_evidence(self):
+        document = json.loads((FIXTURES / "java-semantic-call-facts.json").read_text())
+        document["providerFacts"].append({
+            "id": "missing-certainty",
+            "caller": "com.example.Resource#handle",
+            "callee": "com.example.Service#unknown",
+            "relationshipType": "reflection",
+            "status": "emitted",
+            "evidence": [{"kind": "call-site", "path": "src/main/java/com/example/Resource.java", "line": 30}],
+        })
+        result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
+        uncertain_evidence = next(
+            evidence for evidence in result.evidence if "unresolved" in evidence["claims"][0]
+        )
+        validate_contract_document(uncertain_evidence, "evidence")
+        self.assertTrue(any(item["code"] == "java-fact-uncertain" for item in uncertain_evidence["limitations"]))
+
+        context = RepositoryContextResult(
+            RepositoryProfile(SUBJECT, ("java",), ("maven",), ("pom.xml",), (), (), (), 1, "sha256:" + "a" * 64),
+            (), (), (), (),
+        )
+        candidate_result = derive_objective_candidates(({
+            "objective_id": "objective-vulnerability",
+            "statement": "Test exposure of the vulnerable behavior",
+            "driver_type": "vulnerability",
+            "kind": "regression",
+            "evidence_refs": [uncertain_evidence["evidence_id"]],
+            "target_refs": [],
+        },), context, result.evidence)
+        self.assertEqual(candidate_result.candidates[0].disposition, "needs_evidence")
+        self.assertEqual(candidate_result.candidates[0].expected_behavior_source, "unresolved")
+
+    def test_missing_java_status_is_abstained_and_required_capability_is_not_falsely_available(self):
+        document = json.loads((FIXTURES / "java-semantic-call-facts.json").read_text())
+        document["providerFacts"] = [{"caller": "a", "callee": "b", "relationshipType": "invokes", "certainty": "definite", "evidence": []}]
+        result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
+        self.assertEqual(result.facts[0].status, "abstained")
+        self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "available")
+        self.assertTrue(any(item["code"] == "java-fact-uncertain" for item in result.evidence[0]["limitations"]))
+
+        document["providerFacts"] = []
+        result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
+        self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "unavailable")
+
+    def test_malformed_vpe_metadata_does_not_advertise_capabilities(self):
+        document = json.loads((FIXTURES / "vpe-analysis-context.json").read_text())
+        document["buildEvidence"] = {"untrusted": True}
+        document["provenance"]["dependencyFingerprint"] = "not-a-digest"
+        document["frameworkMetadata"] = [{"kind": "source-annotations", "status": "garbage"}]
+        result = VPEAnalysisContextReplayAdapter(document).collect(SUBJECT)
+        statuses = {capability.capability: capability.status for capability in result.capabilities}
+        self.assertEqual(statuses["build-context"], "unavailable")
+        self.assertEqual(statuses["dependency-context"], "unavailable")
+        self.assertEqual(statuses["framework-metadata"], "unavailable")
+        self.assertTrue(any(finding.kind == "unsupported" for finding in result.findings))
 
     def test_duplicate_java_facts_are_not_emitted_twice(self):
         document = json.loads((FIXTURES / "java-semantic-call-facts.json").read_text())

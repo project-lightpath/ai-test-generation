@@ -75,7 +75,14 @@ class JavaSemanticFactsReplayAdapter:
                 seen_fact_ids.add(fact_id)
                 evidence_id = f"evidence-java-{fact_set}-{fact_digest}"
                 certainty = str(value.get("certainty", "unresolved"))
-                status = str(value.get("status", "emitted"))
+                status = str(value.get("status", "abstained"))
+                if status not in {"emitted", "abstained"}:
+                    findings.append(AnalysisFinding(
+                        f"finding-java-status-{fact_digest}",
+                        "unsupported",
+                        f"Java analyzer fact has unsupported status {status}.",
+                    ))
+                    status = "abstained"
                 claim = str(value.get("claim") or _relationship_claim(value, certainty, status))
                 source_path, line = _source_location(value)
                 prepared_at = metadata.get("preparedAt")
@@ -117,8 +124,14 @@ class JavaSemanticFactsReplayAdapter:
                     ))
 
         capabilities = (
-            CapabilityObservation("java-semantic-calls", "available"),
-            CapabilityObservation("java-framework-facts", "available" if framework_facts else "partial"),
+            CapabilityObservation(
+                "java-semantic-calls",
+                "available" if any(fact_id.startswith("fact-java-provider-") for fact_id in (fact.fact_id for fact in facts)) else "unavailable",
+            ),
+            CapabilityObservation(
+                "java-framework-facts",
+                "available" if any(fact_id.startswith("fact-java-framework-") for fact_id in (fact.fact_id for fact in facts)) else "partial",
+            ),
             CapabilityObservation("runtime-coverage", "unavailable", detail="Java semantic facts do not prove execution coverage."),
         )
         for index, limitation in enumerate(document.get("limitations", []) if isinstance(document.get("limitations"), list) else [], 1):

@@ -410,6 +410,8 @@ def _build_record(
                 "origin": fact.origin,
                 "claim": fact.claim,
                 "evidence_refs": list(evidence_by_fact[fact.fact_id]),
+                "certainty": fact.certainty,
+                "status": fact.status,
             }
             for fact in context.facts
         ],

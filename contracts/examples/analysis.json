@@ -37,7 +37,9 @@
       "fact_id": "fact-source-root",
       "origin": "discovered",
       "claim": "src/main contains production Java sources",
-      "evidence_refs": ["evidence-001"]
+      "evidence_refs": ["evidence-001"],
+      "certainty": "definite",
+      "status": "emitted"
     }
   ],
   "findings": [
