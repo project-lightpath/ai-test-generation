@@ -88,7 +88,16 @@ class JavaSemanticFactsReplayAdapter:
                     ))
                     continue
                 evidence_documents.append(_evidence_document(
-                    evidence_id, evidence_subject, document, value, source_path, line, claim, raw_digest
+                    evidence_id,
+                    evidence_subject,
+                    document,
+                    value,
+                    source_path,
+                    line,
+                    claim,
+                    raw_digest,
+                    certainty,
+                    status,
                 ))
                 facts.append(ContextFact(
                     fact_id,
@@ -123,7 +132,7 @@ class JavaSemanticFactsReplayAdapter:
         return AnalyzerEvidenceResult(tuple(facts), tuple(evidence_documents), capabilities, tuple(findings), (artifact,))
 
 
-def _evidence_document(evidence_id, subject, document, fact, source_path, line, claim, raw_digest):
+def _evidence_document(evidence_id, subject, document, fact, source_path, line, claim, raw_digest, certainty, status):
     """Create canonical evidence for one Java semantic fact."""
     context_id = str(document.get("contextId", "unknown"))
     metadata = document.get("runMetadata") if isinstance(document.get("runMetadata"), Mapping) else {}
@@ -153,7 +162,7 @@ def _evidence_document(evidence_id, subject, document, fact, source_path, line, 
         "artifacts": [],
         "limitations": [
             *([{"code": "java-fact-limitation", "description": str(fact["limitation"])}] if fact.get("limitation") else []),
-            *([{"code": "java-fact-uncertain", "description": f"certainty={fact.get('certainty', 'unresolved')}; status={fact.get('status', 'emitted')}"}] if fact.get("certainty") in {"possible", "unresolved"} or fact.get("status") == "abstained" else []),
+            *([{"code": "java-fact-uncertain", "description": f"certainty={certainty}; status={status}"}] if certainty in {"possible", "unresolved"} or status == "abstained" else []),
         ],
     }
 

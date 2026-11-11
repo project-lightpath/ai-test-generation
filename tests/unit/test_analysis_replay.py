@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
-from atg.adapters.analysis.java_facts import JavaSemanticFactsReplayAdapter  # noqa: E402
+from atg.adapters.analysis.java_facts import JavaSemanticFactsReplayAdapter, _digest  # noqa: E402
 from atg.adapters.analysis.vpe_context import VPEAnalysisContextReplayAdapter  # noqa: E402
 from atg.domain.repository_analysis import RepositorySubject  # noqa: E402
 from atg.domain.schema_validation import validate_contract_document  # noqa: E402
@@ -106,7 +106,12 @@ class AnalysisReplayTests(unittest.TestCase):
         document["providerFacts"].append(dict(document["providerFacts"][0]))
         result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
         self.assertEqual(len(result.facts), 2)
-        self.assertIn("finding-java-duplicate-", "".join(finding.finding_id for finding in result.findings))
+        duplicate_finding = next(
+            finding for finding in result.findings if finding.finding_id.startswith("finding-java-duplicate-")
+        )
+        expected_id = "finding-java-duplicate-" + _digest(document["providerFacts"][0]).removeprefix("sha256:")[:16]
+        self.assertEqual(duplicate_finding.finding_id, expected_id)
+        self.assertEqual(duplicate_finding.kind, "conflicting")
 
 
 if __name__ == "__main__":
