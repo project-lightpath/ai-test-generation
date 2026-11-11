@@ -82,7 +82,7 @@ class JavaSemanticFactsReplayAdapter:
                         "unsupported",
                         f"Java analyzer fact has unsupported status {status}.",
                     ))
-                    status = "abstained"
+                    continue
                 claim = str(value.get("claim") or _relationship_claim(value, certainty, status))
                 source_path, line = _source_location(value)
                 prepared_at = metadata.get("preparedAt")

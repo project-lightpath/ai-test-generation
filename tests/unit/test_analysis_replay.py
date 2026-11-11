@@ -147,6 +147,33 @@ class AnalysisReplayTests(unittest.TestCase):
         result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
         self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "unavailable")
 
+    def test_unsupported_java_status_is_skipped_but_raw_artifact_and_abstentions_remain(self):
+        document = json.loads((FIXTURES / "java-semantic-call-facts.json").read_text())
+        document["providerFacts"] = [{
+            "id": "unsupported-status",
+            "caller": "a",
+            "callee": "b",
+            "relationshipType": "invokes",
+            "certainty": "definite",
+            "status": "future-status",
+            "evidence": [],
+        }, {
+            "id": "supported-abstention",
+            "caller": "c",
+            "callee": "d",
+            "relationshipType": "reflection",
+            "certainty": "unresolved",
+            "status": "abstained",
+            "evidence": [],
+        }]
+        result = JavaSemanticFactsReplayAdapter(document).collect(SUBJECT)
+        provider_facts = [fact for fact in result.facts if fact.fact_id.startswith("fact-java-provider-")]
+        self.assertEqual(len(provider_facts), 1)
+        self.assertEqual(provider_facts[0].status, "abstained")
+        self.assertEqual(next(capability for capability in result.capabilities if capability.capability == "java-semantic-calls").status, "available")
+        self.assertEqual(len(result.artifacts), 1)
+        self.assertTrue(any(finding.finding_id.startswith("finding-java-status-") for finding in result.findings))
+
     def test_malformed_vpe_metadata_does_not_advertise_capabilities(self):
         document = json.loads((FIXTURES / "vpe-analysis-context.json").read_text())
         document["buildEvidence"] = {"untrusted": True}
