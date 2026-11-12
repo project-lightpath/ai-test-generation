@@ -27,6 +27,23 @@ def event(run_id, event_id, revision, event_type, **kwargs):
 
 
 class RunStateTests(unittest.TestCase):
+    def test_plan_submission_binds_active_plan_artifact(self):
+        state = RunState.initial("run-1")
+        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = state.apply(event("run-1", "e2", 1, "analysis_started")).state
+        state = state.apply(event("run-1", "e3", 2, "analysis_completed")).state
+        state = state.apply(event("run-1", "e4", 3, "checkpoint_created", checkpoint_id="cp-analysis", checkpoint_kind="analysis_review")).state
+        state = state.apply(event("run-1", "e5", 4, "decision_recorded", checkpoint_id="cp-analysis", decision="approved", decision_id="decision-1", actor_id="reviewer-1", actor_role="owner", authorization_ref="auth-1")).state
+        state = state.apply(event("run-1", "e6", 5, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64)).state
+        self.assertEqual(state.status, "planning")
+        self.assertEqual(state.active_plan_id, "plan-1")
+        self.assertEqual(state.active_plan_revision, 1)
+
+    def test_plan_submission_requires_planning_state(self):
+        state = RunState.initial("run-1").apply(event("run-1", "e1", 0, "admit")).state
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e2", 1, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64))
+
     def test_analysis_gate_outcomes_are_terminal_and_reasoned(self):
         for event_type, expected_status in (("analysis_blocked", "blocked"), ("analysis_inconclusive", "inconclusive")):
             with self.subTest(event_type=event_type):

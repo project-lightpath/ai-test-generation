@@ -41,7 +41,7 @@ class SupersessionError(RunStateError):
 
 EVENT_TYPES = frozenset({
     "admit", "admission_blocked", "analysis_started", "analysis_completed", "analysis_blocked", "analysis_inconclusive", "checkpoint_created", "checkpoint_expired",
-    "decision_recorded", "planning_completed", "generation_started", "generation_completed",
+    "decision_recorded", "planning_completed", "plan_submitted", "generation_started", "generation_completed",
     "execution_started", "execution_completed", "quality_passed", "quality_blocked",
     "quality_inconclusive", "quality_gap", "retry_requested", "return_to_analyze",
     "return_to_plan", "return_to_code", "return_to_execute", "cancel",
@@ -75,6 +75,10 @@ class RunEvent:
     authorization_ref: str | None = None
     decision_id: str | None = None
     expires_at: str | None = None
+    plan_id: str | None = None
+    plan_revision: int | None = None
+    plan_artifact_id: str | None = None
+    plan_artifact_digest: str | None = None
 
     def __post_init__(self) -> None:
         """Validate event identity, payload, and event-specific requirements."""
@@ -93,6 +97,14 @@ class RunEvent:
             value = getattr(self, field_name)
             if value is not None:
                 validate_identifier(value, field_name)
+        for field_name in ("plan_id", "plan_artifact_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                validate_identifier(value, field_name)
+        if self.plan_revision is not None and (not isinstance(self.plan_revision, int) or self.plan_revision < 1):
+            raise InvalidEventError("plan_revision must be a positive integer")
+        if self.plan_artifact_digest is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.plan_artifact_digest):
+            raise InvalidEventError("plan_artifact_digest must be a sha256 digest")
         for field_name in ("actor_role", "reason"):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, str):
@@ -108,6 +120,8 @@ class RunEvent:
         if self.event_type == "decision_recorded":
             if not all((self.checkpoint_id, self.decision, self.decision_id, self.actor_id, self.actor_role, self.authorization_ref)):
                 raise InvalidEventError("decisions require checkpoint, decision, reviewer, and authorization fields")
+        if self.event_type == "plan_submitted" and not all((self.plan_id, self.plan_revision, self.plan_artifact_id, self.plan_artifact_digest)):
+            raise InvalidEventError("plan submission requires plan identity, revision, and artifact metadata")
         if self.event_type in {"admission_blocked", "analysis_blocked", "analysis_inconclusive", "cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
             raise InvalidEventError(f"{self.event_type} requires a reason")
 
@@ -131,6 +145,10 @@ class RunState:
     active_checkpoint_id: str | None = None
     active_checkpoint_expires_at: str | None = None
     checkpoint_return_status: str | None = None
+    active_plan_id: str | None = None
+    active_plan_revision: int | None = None
+    active_plan_artifact_id: str | None = None
+    active_plan_artifact_digest: str | None = None
     superseded_checkpoint_ids: tuple[str, ...] = ()
     processed_event_ids: tuple[str, ...] = ()
     event_fingerprints: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
@@ -168,6 +186,7 @@ class RunState:
         "analysis_blocked": {"analyzing": "blocked"},
         "analysis_inconclusive": {"analyzing": "inconclusive"},
         "planning_completed": {"planning": "planning"},
+        "plan_submitted": {"planning": "planning"},
         "generation_started": {"coding": "coding"},
         "generation_completed": {"coding": "coding"},
         "execution_started": {"executing": "executing"},
@@ -242,6 +261,15 @@ class RunState:
             next_state = self._replace(
                 event,
                 status=next_status,
+                **(
+                    {
+                        "active_plan_id": event.plan_id,
+                        "active_plan_revision": event.plan_revision,
+                        "active_plan_artifact_id": event.plan_artifact_id,
+                        "active_plan_artifact_digest": event.plan_artifact_digest,
+                    }
+                    if event.event_type == "plan_submitted" else {}
+                ),
                 terminal_reason=(
                     None
                     if event.event_type == "retry_requested"
@@ -388,6 +416,10 @@ class RunState:
             "active_checkpoint_expires_at": self.active_checkpoint_expires_at,
             "checkpoint_return_status": self.checkpoint_return_status,
             "terminal_reason": self.terminal_reason,
+            "active_plan_id": self.active_plan_id,
+            "active_plan_revision": self.active_plan_revision,
+            "active_plan_artifact_id": self.active_plan_artifact_id,
+            "active_plan_artifact_digest": self.active_plan_artifact_digest,
         }
         document.update({key: value for key, value in optional.items() if value is not None})
         return document
@@ -426,12 +458,19 @@ class RunState:
             isinstance(key, str) and isinstance(value, str) for key, value in fingerprints.items()
         ):
             raise ValueError("event_fingerprints must be an object of strings")
-        for field_name in ("active_checkpoint_id", "active_checkpoint_expires_at", "checkpoint_return_status", "terminal_reason"):
+        for field_name in ("active_checkpoint_id", "active_checkpoint_expires_at", "checkpoint_return_status", "terminal_reason", "active_plan_id", "active_plan_artifact_id", "active_plan_artifact_digest"):
             value = document.get(field_name)
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"{field_name} must be a string when provided")
         if document.get("active_checkpoint_id") is not None:
             validate_identifier(document["active_checkpoint_id"], "active_checkpoint_id")
+        for field_name in ("active_plan_id", "active_plan_artifact_id"):
+            if document.get(field_name) is not None:
+                validate_identifier(document[field_name], field_name)
+        if document.get("active_plan_revision") is not None and (not isinstance(document["active_plan_revision"], int) or document["active_plan_revision"] < 1):
+            raise ValueError("active_plan_revision must be a positive integer")
+        if document.get("active_plan_artifact_digest") is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", document["active_plan_artifact_digest"]):
+            raise ValueError("active_plan_artifact_digest must be a sha256 digest")
         for key in fingerprints:
             validate_identifier(key, "event_fingerprints key")
         if any(not re.fullmatch(r"[A-Fa-f0-9]{64}", value) for value in fingerprints.values()):
@@ -450,6 +489,10 @@ class RunState:
             processed_event_ids=tuple(document.get("processed_event_ids", [])),
             event_fingerprints=fingerprints,
             terminal_reason=document.get("terminal_reason") or None,
+            active_plan_id=document.get("active_plan_id") or None,
+            active_plan_revision=document.get("active_plan_revision"),
+            active_plan_artifact_id=document.get("active_plan_artifact_id") or None,
+            active_plan_artifact_digest=document.get("active_plan_artifact_digest") or None,
             admission_blocked=admission_blocked,
         )
 
@@ -465,6 +508,10 @@ class RunState:
                 "active_checkpoint_expires_at", self.active_checkpoint_expires_at
             ),
             checkpoint_return_status=changes.get("checkpoint_return_status", self.checkpoint_return_status),
+            active_plan_id=changes.get("active_plan_id", self.active_plan_id),
+            active_plan_revision=changes.get("active_plan_revision", self.active_plan_revision),
+            active_plan_artifact_id=changes.get("active_plan_artifact_id", self.active_plan_artifact_id),
+            active_plan_artifact_digest=changes.get("active_plan_artifact_digest", self.active_plan_artifact_digest),
             superseded_checkpoint_ids=changes.get(
                 "superseded_checkpoint_ids", self.superseded_checkpoint_ids
             ),
