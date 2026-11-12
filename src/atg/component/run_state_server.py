@@ -19,6 +19,7 @@ from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
 from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService
+from atg.application.planning import PlanningConflictError, PlanningRequest, PlanningService
 from atg.application.readiness import PlatformReadinessService
 from atg.domain.repository_analysis import RepositorySubject
 from atg.domain.schema_validation import ContractValidationError, contract_asset_path
@@ -40,6 +41,7 @@ ANALYSIS_FIELDS = frozenset({
     "analysis_id", "request_id", "run_id", "repository", "expected_revision", "occurred_at",
     "objective_refs", "requested_capabilities", "supplied_evidence", "supplied_objectives",
 })
+PLAN_FIELDS = frozenset({"plan_id", "analysis_id", "run_id", "expected_revision", "occurred_at"})
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
 DIGEST_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$")
@@ -118,6 +120,7 @@ def create_server(
     admission_service = AdmissionService(store, (CapabilityCheck(), IdentityCheck()), readiness=readiness_service)
     repository_roots = dict(repository_roots or {})
     analysis_service = AnalysisService(store, LocalRepositoryContextAdapter(), tuple(analyzers))
+    planning_service = PlanningService(store)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
@@ -136,6 +139,18 @@ def create_server(
                         self._respond(404, {"error": "analysis not found"})
                     else:
                         self._respond(200, _analysis_document(record))
+                elif len(parts) == 2 and parts[0] == "plans":
+                    record = store.get_plan(parts[1])
+                    if record is None:
+                        self._respond(404, {"error": "plan not found"})
+                    else:
+                        self._respond(200, _plan_document(record))
+                elif len(parts) == 2 and parts[0] == "checkpoints":
+                    checkpoint = store.get_checkpoint(parts[1])
+                    if checkpoint is None:
+                        self._respond(404, {"error": "checkpoint not found"})
+                    else:
+                        self._respond(200, checkpoint)
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
                 elif parts == ["readiness"]:
@@ -315,6 +330,55 @@ def create_server(
                     result = analysis_service.analyze(request)
                     self._respond(200 if result.duplicate else 201, _analysis_document(result))
                     return
+                if parts == ["plans"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("plan body must be a JSON object")
+                    unknown = sorted(set(body) - PLAN_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported plan fields: {', '.join(unknown)}")
+                    for field in ("plan_id", "analysis_id", "run_id"):
+                        try:
+                            validate_identifier(body.get(field), field)
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body.get("occurred_at"), "occurred_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body.get("expected_revision"), int) or isinstance(body.get("expected_revision"), bool) or body["expected_revision"] < 0:
+                        raise BadRequestError("expected_revision must be a non-negative integer")
+                    request = PlanningRequest(
+                        body["plan_id"], body["analysis_id"], body["run_id"], body["expected_revision"], body["occurred_at"]
+                    )
+                    result = planning_service.plan(request)
+                    self._respond(200 if result.duplicate else 201, _plan_document(result))
+                    return
+                if len(parts) == 3 and parts[0] == "checkpoints" and parts[2] == "decision":
+                    if not isinstance(body, dict):
+                        raise BadRequestError("decision body must be a JSON object")
+                    required = ("run_id", "expected_revision", "occurred_at", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref")
+                    if any(field not in body for field in required):
+                        raise BadRequestError("decision requires run, revision, timestamp, decision, reviewer, and authorization fields")
+                    try:
+                        event = RunEvent(
+                            event_id=f"{body['decision_id']}-event",
+                            run_id=body["run_id"],
+                            event_type="decision_recorded",
+                            expected_revision=body["expected_revision"],
+                            occurred_at=body["occurred_at"],
+                            checkpoint_id=parts[1],
+                            decision=body["decision"],
+                            decision_id=body["decision_id"],
+                            actor_id=body["actor_id"],
+                            actor_role=body["actor_role"],
+                            authorization_ref=body["authorization_ref"],
+                            reason=body.get("reason"),
+                        )
+                    except (TypeError, ValueError) as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    result = store.apply(event)
+                    self._respond(200, {"duplicate": result.duplicate, "state": result.state.to_document()})
+                    return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
                         raise BadRequestError("request body must be a JSON object")
@@ -351,6 +415,8 @@ def create_server(
             except AdmissionConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except AnalysisConflictError as exc:
+                self._respond(409, {"error": str(exc)})
+            except PlanningConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except AnalysisProcessingError:
                 self._respond(422, {"error": "analysis processing failed"})
@@ -413,6 +479,17 @@ def _analysis_document(record) -> dict:
         "checkpoint": dict(record.checkpoint) if record.checkpoint is not None else None,
         "evidence": [dict(document) for document in record.evidence],
         "objectives": [dict(document) for document in record.objectives],
+        "provenance": dict(record.provenance),
+        "artifacts": [dict(document["artifact"]) for document in record.artifacts],
+    }
+
+
+def _plan_document(record) -> dict:
+    """Serialize a normalized plan bundle without exposing internal raw state."""
+    return {
+        "duplicate": record.duplicate,
+        "manifest": dict(record.manifest),
+        "checkpoint": dict(record.checkpoint),
         "provenance": dict(record.provenance),
         "artifacts": [dict(document["artifact"]) for document in record.artifacts],
     }

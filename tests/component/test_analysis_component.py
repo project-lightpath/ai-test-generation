@@ -137,6 +137,19 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(document, {"error": "analysis not found"})
 
+    def test_plan_and_checkpoint_unknown_ids_return_not_found(self):
+        status, document = self.request("GET", "/plans/missing-plan")
+        self.assertEqual(status, 404)
+        self.assertEqual(document, {"error": "plan not found"})
+        status, document = self.request("GET", "/checkpoints/missing-checkpoint")
+        self.assertEqual(status, 404)
+        self.assertEqual(document, {"error": "checkpoint not found"})
+
+    def test_plan_submission_rejects_malformed_body(self):
+        status, document = self.request("POST", "/plans", {"plan_id": "plan-1"})
+        self.assertEqual(status, 400)
+        self.assertIn("identifier", document["error"])
+
     def test_analysis_reuses_id_only_for_identical_inputs(self):
         self.admit()
         status, _ = self.request("POST", "/analyses", self.analysis_body())
