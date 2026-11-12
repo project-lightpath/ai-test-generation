@@ -79,6 +79,7 @@ class RunEvent:
     plan_revision: int | None = None
     plan_artifact_id: str | None = None
     plan_artifact_digest: str | None = None
+    feedback_id: str | None = None
 
     def __post_init__(self) -> None:
         """Validate event identity, payload, and event-specific requirements."""
@@ -101,6 +102,8 @@ class RunEvent:
             value = getattr(self, field_name)
             if value is not None:
                 validate_identifier(value, field_name)
+        if self.feedback_id is not None:
+            validate_identifier(self.feedback_id, "feedback_id")
         if self.plan_revision is not None and (not isinstance(self.plan_revision, int) or self.plan_revision < 1):
             raise InvalidEventError("plan_revision must be a positive integer")
         if self.plan_artifact_digest is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.plan_artifact_digest):
@@ -124,6 +127,8 @@ class RunEvent:
             raise InvalidEventError("plan submission requires plan identity, revision, and artifact metadata")
         if self.event_type in {"admission_blocked", "analysis_blocked", "analysis_inconclusive", "cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
             raise InvalidEventError(f"{self.event_type} requires a reason")
+        if self.event_type == "return_to_plan" and not self.feedback_id:
+            raise InvalidEventError("return_to_plan requires feedback_id")
 
 
 @dataclass(frozen=True)

@@ -27,6 +27,7 @@
     ,"plan_revision": { "type": "integer", "minimum": 1 }
     ,"plan_artifact_id": { "$ref": "common.schema.json#/$defs/id" }
     ,"plan_artifact_digest": { "$ref": "common.schema.json#/$defs/digest" }
+    ,"feedback_id": { "$ref": "common.schema.json#/$defs/id" }
   },
   "allOf": [
     {

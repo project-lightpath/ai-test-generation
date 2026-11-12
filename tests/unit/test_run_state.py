@@ -436,7 +436,7 @@ class RunStateTests(unittest.TestCase):
                     active_checkpoint_expires_at="2026-11-04T17:00:00Z",
                     checkpoint_return_status="planning",
                 )
-                result = state.apply(event("run-1", "e1", 0, event_type, reason="review feedback"))
+                result = state.apply(event("run-1", "e1", 0, event_type, reason="review feedback", feedback_id="feedback-1" if event_type == "return_to_plan" else None))
                 self.assertEqual(result.state.status, expected_status)
                 self.assertIsNone(result.state.active_checkpoint_id)
                 self.assertIsNone(result.state.checkpoint_return_status)

@@ -86,6 +86,12 @@ class SQLiteRunStateStore:
                 document_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS checkpoints_by_run ON checkpoints(run_id);
+            CREATE TABLE IF NOT EXISTS feedback (
+                feedback_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                request_digest TEXT NOT NULL,
+                document_json TEXT NOT NULL
+            );
             """
         )
         admission_columns = {
@@ -208,6 +214,39 @@ class SQLiteRunStateStore:
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
+
+    def record_feedback_revision(self, feedback, record: PlanRecord, return_event: RunEvent, submission_event: RunEvent, checkpoint_event: RunEvent) -> PlanRecord:
+        """Atomically persist feedback, return-to-plan, and a superseding plan."""
+        document = feedback.to_document()
+        request_digest = feedback.digest()
+        validate_plan_record(record)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute("SELECT request_digest FROM feedback WHERE feedback_id = ?", (feedback.feedback_id,)).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != request_digest:
+                        raise PlanningConflictError("feedback identity is bound to different inputs")
+                    stored = self.get_plan(record.manifest["plan_id"])
+                    self._connection.execute("COMMIT")
+                    return PlanRecord(stored.request_digest, stored.manifest, stored.checkpoint, stored.provenance, stored.artifacts, True)
+                self._apply_locked(return_event)
+                self._apply_locked(submission_event)
+                self._apply_locked(checkpoint_event)
+                self._connection.execute("INSERT INTO feedback(feedback_id, run_id, request_digest, document_json) VALUES (?, ?, ?, ?)", (feedback.feedback_id, feedback.run_id, request_digest, json.dumps(document, sort_keys=True)))
+                self._connection.execute("INSERT INTO plans(plan_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)", (record.manifest["plan_id"], record.manifest["run_id"], record.request_digest, json.dumps(record.to_storage_document(), sort_keys=True)))
+                self._connection.execute("INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)", (record.checkpoint["checkpoint_id"], record.manifest["run_id"], record.checkpoint["kind"], json.dumps(record.checkpoint, sort_keys=True)))
+                self._connection.execute("COMMIT")
+                return record
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
+    def get_feedback(self, feedback_id: str) -> dict | None:
+        """Return a persisted feedback document by ID."""
+        with self._lock:
+            row = self._connection.execute("SELECT document_json FROM feedback WHERE feedback_id = ?", (feedback_id,)).fetchone()
+        return json.loads(row["document_json"]) if row is not None else None
 
     def record_analysis(
         self,

@@ -20,6 +20,7 @@ from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
 from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService
 from atg.application.planning import PlanningConflictError, PlanningRequest, PlanningService
+from atg.application.feedback import FeedbackConflictError, FeedbackRequest
 from atg.application.readiness import PlatformReadinessService
 from atg.domain.repository_analysis import RepositorySubject
 from atg.domain.schema_validation import ContractValidationError, contract_asset_path
@@ -151,6 +152,9 @@ def create_server(
                         self._respond(404, {"error": "checkpoint not found"})
                     else:
                         self._respond(200, checkpoint)
+                elif len(parts) == 2 and parts[0] == "feedback":
+                    feedback = store.get_feedback(parts[1])
+                    self._respond(200, feedback) if feedback is not None else self._respond(404, {"error": "feedback not found"})
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
                 elif parts == ["readiness"]:
@@ -353,6 +357,24 @@ def create_server(
                     result = planning_service.plan(request)
                     self._respond(200 if result.duplicate else 201, _plan_document(result))
                     return
+                if len(parts) == 3 and parts[0] == "plans" and parts[2] == "feedback":
+                    if not isinstance(body, dict):
+                        raise BadRequestError("feedback body must be a JSON object")
+                    required = ("feedback_id", "run_id", "plan_revision", "plan_artifact_digest", "checkpoint_id", "created_at", "message")
+                    if any(field not in body for field in required):
+                        raise BadRequestError("feedback requires feedback identity, plan revision, checkpoint, timestamp, and message")
+                    try:
+                        request = FeedbackRequest(
+                            feedback_id=body["feedback_id"], run_id=body["run_id"], plan_id=parts[1],
+                            plan_revision=body["plan_revision"], plan_artifact_digest=body["plan_artifact_digest"],
+                            checkpoint_id=body["checkpoint_id"], created_at=body["created_at"], message=body["message"],
+                            category=body.get("category", "other"), severity=body.get("severity", "info"), actor_id=body.get("actor_id", "reviewer"),
+                        )
+                    except (TypeError, ValueError) as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    result = planning_service.revise_with_feedback(request)
+                    self._respond(200 if result.duplicate else 201, _plan_document(result))
+                    return
                 if len(parts) == 3 and parts[0] == "checkpoints" and parts[2] == "decision":
                     if not isinstance(body, dict):
                         raise BadRequestError("decision body must be a JSON object")
@@ -417,6 +439,8 @@ def create_server(
             except AnalysisConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except PlanningConflictError as exc:
+                self._respond(409, {"error": str(exc)})
+            except FeedbackConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except AnalysisProcessingError:
                 self._respond(422, {"error": "analysis processing failed"})

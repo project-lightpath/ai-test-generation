@@ -29,3 +29,6 @@ class PlanningStore(Protocol):
         checkpoint_event: RunEvent,
     ) -> "PlanRecord":
         """Atomically persist plan output, submission, and review checkpoint."""
+
+    def record_feedback_revision(self, feedback, record, return_event, submission_event, checkpoint_event):
+        """Atomically persist feedback, return-to-plan, and a superseding plan."""

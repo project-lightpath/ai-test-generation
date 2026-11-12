@@ -10,6 +10,7 @@ from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore  # noq
 from atg.adapters.repository.local import LocalRepositoryContextAdapter  # noqa: E402
 from atg.application.analysis import AnalysisService  # noqa: E402
 from atg.application.planning import PlanningConflictError, PlanningRequest, PlanningService  # noqa: E402
+from atg.application.feedback import FeedbackRequest  # noqa: E402
 from atg.domain.run_state import RunEvent, StaleEventError  # noqa: E402
 from tests.unit.test_analysis import analysis_request, admit, create_repository, supplied_evidence, supplied_objective  # noqa: E402
 
@@ -95,6 +96,23 @@ class PlanningServiceTests(unittest.TestCase):
             service.plan(request)
             with self.assertRaises(PlanningConflictError):
                 service.plan(PlanningRequest("plan-1", "analysis-other", "run-1", state.revision, "2099-11-09T17:00:02Z"))
+            store.close()
+
+    def test_feedback_creates_superseding_plan_revision(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store = prepare_planning_store(root)
+            state = store.get_run("run-1")
+            record = PlanningService(store).plan(PlanningRequest("plan-1", "analysis-1", "run-1", state.revision, "2099-11-09T17:00:02Z"))
+            store.apply(RunEvent("plan-decision", "run-1", "decision_recorded", 7, "2099-11-09T17:00:03Z", checkpoint_id="checkpoint-plan-1", decision="approved", decision_id="decision-plan", actor_id="reviewer-1", actor_role="owner", authorization_ref="auth-plan"))
+            feedback = FeedbackRequest("feedback-1", "run-1", "plan-1", 1, record.manifest["artifact_refs"][0] and record.artifacts[0]["artifact"]["digest"], "checkpoint-plan-1", "2099-11-09T17:00:04Z", "Clarify expected behavior")
+            revised = PlanningService(store).revise_with_feedback(feedback)
+            self.assertEqual(revised.manifest["plan_revision"], 2)
+            self.assertEqual(revised.manifest["supersedes"], "plan-1")
+            self.assertEqual(revised.manifest["feedback_refs"], ["feedback-1"])
+            self.assertEqual(store.get_run("run-1").status, "plan_review")
+            self.assertIsNotNone(store.get_feedback("feedback-1"))
             store.close()
 
 
