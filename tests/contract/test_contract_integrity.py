@@ -37,7 +37,8 @@ def graph_documents():
     }
     generation = {
         "contract": "atg.generation", "version": "1.0", "generation_id": "generation-1",
-        "run_id": "run-1", "plan_id": "plan-1",
+        "run_id": "run-1", "plan_id": "plan-1", "plan_revision": 1,
+        "plan_artifact_digest": "sha256:" + "b" * 64, "plan_checkpoint_id": "checkpoint-plan-1", "plan_decision_id": "decision-plan-1",
         "base": {"kind": "git", "id": "base"}, "candidate": {"kind": "git", "id": "candidate"},
         "patch_digest": "sha256:" + "a" * 64, "changed_files": ["src/test/Test.java"],
         "status": "verified", "created_at": "2026-11-03T17:00:00Z",
@@ -55,6 +56,7 @@ def graph_documents():
     }
     provenance = {
         "contract": "atg.provenance", "version": "1.0", "provenance_id": "provenance-1", "run_id": "run-1",
+        "recorded_at": "2026-11-03T17:00:00Z", "identities": [{"kind": "git", "id": "repo-1"}], "contract_versions": {"atg.plan": "1.0"},
         "artifacts": [
             {"artifact_id": "artifact-analysis-1", "media_type": "application/vnd.atg.analysis+json", "digest": "sha256:" + "a" * 64},
             {"artifact_id": "artifact-plan-1", "media_type": "application/vnd.atg.plan+json", "digest": "sha256:" + "b" * 64},
@@ -65,11 +67,16 @@ def graph_documents():
         "run_id": "run-1", "request_id": "request-1", "base_execution_id": "execution-base", "candidate_execution_id": "execution-candidate",
         "quality_id": "quality-1", "provenance_id": "provenance-1", "comparisons": [],
     }
+    checkpoint = {
+        "contract": "atg.checkpoint", "version": "1.0", "checkpoint_id": "checkpoint-plan-1", "run_id": "run-1",
+        "kind": "plan_review", "revision": 1, "state": "approved", "created_at": "2026-11-03T17:00:00Z",
+        "reviewed_artifact": {"artifact_id": "artifact-plan-1", "media_type": "application/vnd.atg.plan+json", "digest": "sha256:" + "b" * 64},
+    }
     request = {
         "contract": "atg.request", "version": "1.0", "request_id": "request-1", "run_id": "run-1",
         "objective_ids": ["objective-1"],
     }
-    return [run, request, objective, analysis, plan, generation, *executions, quality, provenance, differential]
+    return [run, request, objective, analysis, plan, generation, *executions, quality, provenance, checkpoint, differential]
 
 
 class ContractIntegrityTests(unittest.TestCase):
@@ -153,6 +160,15 @@ class ContractIntegrityTests(unittest.TestCase):
         with self.assertRaises(ContractIntegrityError) as raised:
             validate_documents(documents)
         self.assertIn("analysis.evidence_refs belongs to a different subject", raised.exception.errors)
+
+    def test_generation_requires_approved_plan_artifact(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        documents = [json.loads((root / filename).read_text()) for filename in ("run-state.json", "request.json", "objective.json", "provenance.json", "analysis.json", "plan.json", "checkpoint.json", "generation.json")]
+        generation = next(document for document in documents if document.get("contract") == "atg.generation")
+        generation["plan_artifact_digest"] = "sha256:" + "0" * 64
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("generation requires the approved plan artifact digest", raised.exception.errors)
 
     def test_complete_evidence_graph_is_consistent(self):
         validate_documents(graph_documents())

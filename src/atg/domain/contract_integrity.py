@@ -198,7 +198,27 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
         if contract == "atg.feedback":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "feedback.evidence_refs")
         if contract == "atg.generation":
-            _require_related(document, "atg.plan", document.get("plan_id"), require, errors, "generation.plan_id")
+            plan = _require_related(document, "atg.plan", document.get("plan_id"), require, errors, "generation.plan_id")
+            if plan is not None:
+                if plan.get("run_id") != document.get("run_id"):
+                    errors.append("generation.plan_id belongs to a different run")
+                if plan.get("status") != "approved":
+                    errors.append("generation requires an approved plan")
+                if document.get("plan_revision") != plan.get("plan_revision"):
+                    errors.append("generation plan revision differs from approved plan")
+                checkpoints = [
+                    candidate for candidate in docs
+                    if candidate.get("contract") == "atg.checkpoint"
+                    and candidate.get("run_id") == document.get("run_id")
+                    and candidate.get("kind") == "plan_review"
+                    and candidate.get("state") == "approved"
+                ]
+                if not any(
+                    checkpoint.get("reviewed_artifact", {}).get("artifact_id") == f"artifact-{plan.get('plan_id')}"
+                    and checkpoint.get("reviewed_artifact", {}).get("digest") == document.get("plan_artifact_digest")
+                    for checkpoint in checkpoints
+                ):
+                    errors.append("generation requires the approved plan artifact digest")
         if contract == "atg.execution":
             _require_related(
                 document,
