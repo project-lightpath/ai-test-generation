@@ -53,6 +53,16 @@ class PlanningServiceTests(unittest.TestCase):
             self.assertEqual(store.get_run("run-1").status, "plan_review")
             self.assertEqual(store.get_run("run-1").active_plan_id, "plan-1")
             self.assertEqual(store.get_plan("plan-1").manifest, record.manifest)
+            store.apply(RunEvent(
+                "plan-decision", "run-1", "decision_recorded", 7, "2099-11-09T17:00:03Z",
+                checkpoint_id="checkpoint-plan-1", decision="approved", decision_id="decision-plan",
+                actor_id="reviewer-1", actor_role="owner", authorization_ref="auth-plan",
+            ))
+            approved = store.get_plan("plan-1")
+            self.assertEqual(approved.manifest["status"], "approved")
+            self.assertEqual(approved.checkpoint["state"], "approved")
+            self.assertEqual(store.get_checkpoint("checkpoint-plan-1")["state"], "approved")
+            self.assertEqual(store.get_run("run-1").status, "coding")
             store.close()
 
     def test_plan_duplicate_is_idempotent(self):

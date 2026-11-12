@@ -79,6 +79,13 @@ class SQLiteRunStateStore:
                 bundle_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS plans_by_run ON plans(run_id);
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                checkpoint_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                kind TEXT NOT NULL,
+                document_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS checkpoints_by_run ON checkpoints(run_id);
             """
         )
         admission_columns = {
@@ -191,6 +198,10 @@ class SQLiteRunStateStore:
                 self._connection.execute(
                     "INSERT INTO plans(plan_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)",
                     (plan_id, run_id, record.request_digest, json.dumps(record.to_storage_document(), sort_keys=True)),
+                )
+                self._connection.execute(
+                    "INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)",
+                    (record.checkpoint["checkpoint_id"], run_id, record.checkpoint["kind"], json.dumps(record.checkpoint, sort_keys=True)),
                 )
                 self._connection.execute("COMMIT")
                 return record
@@ -320,11 +331,61 @@ class SQLiteRunStateStore:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 result = self._apply_locked(event)
+                if event.event_type == "decision_recorded":
+                    self._sync_checkpoint_decision_locked(event)
                 self._connection.execute("COMMIT")
                 return result
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
+
+    def get_checkpoint(self, checkpoint_id: str) -> dict | None:
+        """Return a durable checkpoint projection by ID."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT document_json FROM checkpoints WHERE checkpoint_id = ?", (checkpoint_id,)
+            ).fetchone()
+        return json.loads(row["document_json"]) if row is not None else None
+
+    def _sync_checkpoint_decision_locked(self, event: RunEvent) -> None:
+        """Apply a decision to checkpoint and plan projections in one transaction."""
+        row = self._connection.execute(
+            "SELECT document_json FROM checkpoints WHERE checkpoint_id = ?", (event.checkpoint_id,)
+        ).fetchone()
+        if row is None:
+            return
+        checkpoint = json.loads(row["document_json"])
+        checkpoint["state"] = "approved" if event.decision == "approved" else "rejected"
+        checkpoint["decision"] = {
+            "decision_id": event.decision_id,
+            "reviewer": {
+                "identity": {"kind": "person", "id": event.actor_id},
+                "role": event.actor_role,
+                "authorization_ref": event.authorization_ref,
+            },
+            "decided_at": event.occurred_at,
+            "value": event.decision,
+            **({"rationale": event.reason} if event.reason else {}),
+        }
+        self._connection.execute(
+            "UPDATE checkpoints SET document_json = ? WHERE checkpoint_id = ?",
+            (json.dumps(checkpoint, sort_keys=True), event.checkpoint_id),
+        )
+        if checkpoint.get("kind") == "plan_review":
+            plan_id = checkpoint.get("reviewed_artifact", {}).get("artifact_id", "").removeprefix("artifact-")
+            plan_row = self._connection.execute(
+                "SELECT bundle_json FROM plans WHERE plan_id = ?", (plan_id,)
+            ).fetchone()
+            if plan_row is not None:
+                bundle = json.loads(plan_row["bundle_json"])
+                bundle["manifest"]["status"] = "approved" if event.decision == "approved" else "rejected"
+                if event.decision == "approved":
+                    bundle["manifest"]["approved_by"] = event.actor_id
+                bundle["checkpoint"] = checkpoint
+                self._connection.execute(
+                    "UPDATE plans SET bundle_json = ? WHERE plan_id = ?",
+                    (json.dumps(bundle, sort_keys=True), plan_id),
+                )
 
     def _apply_locked(self, event: RunEvent, *, allow_unrecorded_admission: bool = False) -> TransitionResult:
         """Apply an event while the caller owns the active SQLite transaction."""
