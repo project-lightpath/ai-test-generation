@@ -16,6 +16,7 @@ from typing import Iterator
 
 from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
 from atg.application.analysis import AnalysisConflictError, AnalysisRecord
+from atg.application.planning import PlanRecord, PlanningConflictError, validate_plan_record
 from atg.domain.schema_validation import ContractValidationError
 from atg.domain.run_state import (
     DuplicateEventError,
@@ -71,6 +72,13 @@ class SQLiteRunStateStore:
                 bundle_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS analyses_by_run ON analyses(run_id);
+            CREATE TABLE IF NOT EXISTS plans (
+                plan_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                request_digest TEXT NOT NULL,
+                bundle_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS plans_by_run ON plans(run_id);
             """
         )
         admission_columns = {
@@ -143,6 +151,52 @@ class SQLiteRunStateStore:
             raise
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise ContractValidationError("persisted analysis bundle is corrupt") from exc
+
+    def get_plan(self, plan_id: str) -> PlanRecord | None:
+        """Load a durable plan bundle by stable identity."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT plan_id, run_id, request_digest, bundle_json FROM plans WHERE plan_id = ?", (plan_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            record = PlanRecord.from_storage_document(json.loads(row["bundle_json"]))
+            if row["plan_id"] != record.manifest.get("plan_id") or row["run_id"] != record.manifest.get("run_id") or row["request_digest"] != record.request_digest:
+                raise ContractValidationError("persisted plan row metadata differs from bundle")
+            return record
+        except ContractValidationError:
+            raise
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ContractValidationError("persisted plan bundle is corrupt") from exc
+
+    def record_plan(self, record: PlanRecord, submission_event: RunEvent, checkpoint_event: RunEvent) -> PlanRecord:
+        """Atomically persist a plan bundle and its submission/checkpoint events."""
+        validate_plan_record(record)
+        plan_id = str(record.manifest["plan_id"])
+        run_id = str(record.manifest["run_id"])
+        if submission_event.run_id != run_id or checkpoint_event.run_id != run_id:
+            raise ValueError("plan events must belong to the plan run")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute("SELECT request_digest, bundle_json FROM plans WHERE plan_id = ?", (plan_id,)).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != record.request_digest:
+                        raise PlanningConflictError("plan identity is bound to different inputs")
+                    self._connection.execute("COMMIT")
+                    return PlanRecord.from_storage_document(json.loads(existing["bundle_json"]), duplicate=True)
+                self._apply_locked(submission_event)
+                self._apply_locked(checkpoint_event)
+                self._connection.execute(
+                    "INSERT INTO plans(plan_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)",
+                    (plan_id, run_id, record.request_digest, json.dumps(record.to_storage_document(), sort_keys=True)),
+                )
+                self._connection.execute("COMMIT")
+                return record
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
 
     def record_analysis(
         self,

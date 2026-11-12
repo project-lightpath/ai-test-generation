@@ -28,7 +28,16 @@ def event(run_id, event_id, revision, event_type, **kwargs):
 
 def planning_state(run_id="run-1"):
     """Return a planning-stage projection for checkpoint-focused unit tests."""
-    return RunState(run_id=run_id, status="planning", revision=1, updated_at="2026-11-03T17:00:01Z")
+    return RunState(
+        run_id=run_id,
+        status="planning",
+        revision=1,
+        updated_at="2026-11-03T17:00:01Z",
+        active_plan_id="plan-fixture",
+        active_plan_revision=1,
+        active_plan_artifact_id="artifact-plan-fixture",
+        active_plan_artifact_digest="sha256:" + "a" * 64,
+    )
 
 
 class RunStateTests(unittest.TestCase):
@@ -72,25 +81,26 @@ class RunStateTests(unittest.TestCase):
         ).state
         self.assertEqual(state.status, "planning")
         state = state.apply(event("run-1", "e6", 5, "planning_completed")).state
+        state = state.apply(event("run-1", "e7", 6, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64)).state
         state = state.apply(
-            event("run-1", "e7", 6, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
+            event("run-1", "e8", 7, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
         ).state
         self.assertEqual(state.status, "plan_review")
         state = state.apply(
             event(
-                "run-1", "e8", 7, "decision_recorded", checkpoint_id="cp-plan", decision="approved",
+                "run-1", "e9", 8, "decision_recorded", checkpoint_id="cp-plan", decision="approved",
                 decision_id="decision-plan", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
         ).state
         self.assertEqual(state.status, "coding")
-        state = state.apply(event("run-1", "e9", 8, "generation_started")).state
-        state = state.apply(event("run-1", "e10", 9, "generation_completed")).state
+        state = state.apply(event("run-1", "e10", 9, "generation_started")).state
+        state = state.apply(event("run-1", "e11", 10, "generation_completed")).state
         state = state.apply(
             event(
                 "run-1",
-                "e11",
-                10,
+                "e12",
+                11,
                 "checkpoint_created",
                 checkpoint_id="cp-code",
                 checkpoint_kind="code_review",
@@ -99,19 +109,19 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(state.status, "code_review")
         state = state.apply(
             event(
-                "run-1", "e12", 11, "decision_recorded", checkpoint_id="cp-code", decision="approved",
+                "run-1", "e13", 12, "decision_recorded", checkpoint_id="cp-code", decision="approved",
                 decision_id="decision-code", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
         ).state
         self.assertEqual(state.status, "executing")
-        state = state.apply(event("run-1", "e13", 12, "execution_started")).state
-        state = state.apply(event("run-1", "e14", 13, "execution_completed")).state
+        state = state.apply(event("run-1", "e14", 13, "execution_started")).state
+        state = state.apply(event("run-1", "e15", 14, "execution_completed")).state
         state = state.apply(
             event(
                 "run-1",
-                "e15",
-                14,
+                "e16",
+                15,
                 "checkpoint_created",
                 checkpoint_id="cp-exec",
                 checkpoint_kind="execution_review",
@@ -120,7 +130,7 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(state.status, "execution_review")
         state = state.apply(
             event(
-                "run-1", "e16", 15, "decision_recorded", checkpoint_id="cp-exec", decision="approved",
+                "run-1", "e17", 16, "decision_recorded", checkpoint_id="cp-exec", decision="approved",
                 decision_id="decision-exec", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
@@ -128,21 +138,21 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(state.status, "quality_review")
         state = state.apply(
             event(
-                "run-1", "e17", 16, "checkpoint_created", checkpoint_id="cp-quality", checkpoint_kind="quality_review"
+                "run-1", "e18", 17, "checkpoint_created", checkpoint_id="cp-quality", checkpoint_kind="quality_review"
             )
         ).state
         self.assertEqual(state.status, "quality_review")
         state = state.apply(
             event(
-                "run-1", "e18", 17, "decision_recorded", checkpoint_id="cp-quality", decision="approved",
+                "run-1", "e19", 18, "decision_recorded", checkpoint_id="cp-quality", decision="approved",
                 decision_id="decision-quality", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
         ).state
         self.assertEqual(state.status, "completed")
-        self.assertEqual(state.revision, 18)
+        self.assertEqual(state.revision, 19)
         self.assertIsNone(state.active_checkpoint_id)
-        self.assertEqual(len(state.processed_event_ids), 18)
+        self.assertEqual(len(state.processed_event_ids), 19)
 
     def test_exact_retry_is_idempotent(self):
         state = RunState.initial("run-1")

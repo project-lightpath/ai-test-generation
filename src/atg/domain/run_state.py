@@ -320,6 +320,8 @@ class RunState:
                 f"{event.checkpoint_kind} requires status "
                 f"in {sorted(self._CHECKPOINT_PREREQUISITES[event.checkpoint_kind])!r}"
             )
+        if event.checkpoint_kind == "plan_review" and self.active_plan_id is None:
+            raise InvalidTransitionError("plan_review requires a submitted plan artifact")
         if event.checkpoint_id in self.superseded_checkpoint_ids:
             raise InvalidTransitionError("checkpoint id was already superseded")
         if self.active_checkpoint_id is not None:

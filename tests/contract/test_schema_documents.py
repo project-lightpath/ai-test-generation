@@ -219,7 +219,11 @@ class ContractSchemaTests(unittest.TestCase):
         initial = RunState(run_id="run-1", updated_at="2026-11-03T17:00:00Z")
         self._validator("run-state").validate(initial.to_document())
 
-        active = RunState(run_id="run-1", status="planning", revision=1, updated_at="2026-11-03T17:00:01Z")
+        active = RunState(
+            run_id="run-1", status="planning", revision=1, updated_at="2026-11-03T17:00:01Z",
+            active_plan_id="plan-fixture", active_plan_revision=1,
+            active_plan_artifact_id="artifact-plan-fixture", active_plan_artifact_digest="sha256:" + "a" * 64,
+        )
         active = active.apply(
             RunEvent(
                 event_id="event-checkpoint",

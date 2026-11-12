@@ -75,12 +75,13 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
             store.apply(RunEvent("analysis-complete", "run-1", "analysis_completed", 2, "2026-11-03T17:00:00.2Z"))
             store.apply(RunEvent("analysis-review", "run-1", "checkpoint_created", 3, "2026-11-03T17:00:00.3Z", checkpoint_id="analysis-checkpoint", checkpoint_kind="analysis_review"))
             store.apply(RunEvent("analysis-approve", "run-1", "decision_recorded", 4, "2026-11-03T17:00:00.4Z", checkpoint_id="analysis-checkpoint", decision="approved", decision_id="decision-analysis", actor_id="reviewer", actor_role="owner", authorization_ref="auth-analysis"))
+            store.apply(RunEvent("plan-submit", "run-1", "plan_submitted", 5, "2026-11-03T17:00:00.5Z", plan_id="plan-fixture", plan_revision=1, plan_artifact_id="artifact-plan-fixture", plan_artifact_digest="sha256:" + "a" * 64))
             store.apply(
                 RunEvent(
                     event_id="event-checkpoint",
                     run_id="run-1",
                     event_type="checkpoint_created",
-                    expected_revision=5,
+                    expected_revision=6,
                     occurred_at="2026-11-03T17:00:01Z",
                     checkpoint_id="checkpoint-1",
                     checkpoint_kind="plan_review",
@@ -92,7 +93,7 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
                     event_id="event-expire",
                     run_id="run-1",
                     event_type="checkpoint_expired",
-                    expected_revision=6,
+                    expected_revision=7,
                     occurred_at="2026-11-03T17:01:01Z",
                     checkpoint_id="checkpoint-1",
                 )
@@ -102,7 +103,7 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
                     event_id="event-checkpoint-2",
                     run_id="run-1",
                     event_type="checkpoint_created",
-                    expected_revision=7,
+                    expected_revision=8,
                     occurred_at="2026-11-03T17:02:00Z",
                     checkpoint_id="checkpoint-2",
                     checkpoint_kind="plan_review",
@@ -113,7 +114,7 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
                     event_id="event-block",
                     run_id="run-1",
                     event_type="decision_recorded",
-                    expected_revision=8,
+                    expected_revision=9,
                     occurred_at="2026-11-03T17:02:01Z",
                     checkpoint_id="checkpoint-2",
                     decision="blocked",
@@ -129,7 +130,7 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
                     event_id="event-retry",
                     run_id="run-1",
                     event_type="retry_requested",
-                    expected_revision=9,
+                    expected_revision=10,
                     occurred_at="2026-11-03T17:03:00Z",
                     reason="dependency restored",
                 )
@@ -139,7 +140,7 @@ class SQLiteRunStateComponentTests(unittest.TestCase):
             restarted = SQLiteRunStateStore(database)
             state = restarted.replay("run-1")
             self.assertEqual(state.status, "admitted")
-            self.assertEqual(state.revision, 10)
+            self.assertEqual(state.revision, 11)
             self.assertIn("event-retry", state.event_fingerprints)
             restarted.close()
 
