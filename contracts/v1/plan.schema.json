@@ -58,7 +58,25 @@
         "properties": {
           "objective_ref": { "$ref": "common.schema.json#/$defs/id" },
           "disposition": { "enum": ["planned", "excluded", "stated_gap", "not_evaluable"] },
-          "reason": { "type": "string" }
+          "reason": { "type": "string", "minLength": 1 }
+        },
+        "allOf": [{
+          "if": { "properties": { "disposition": { "enum": ["excluded", "stated_gap", "not_evaluable"] } } },
+          "then": { "required": ["reason"] }
+        }]
+      }
+    },
+    "feasibility": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["objective_ref", "strategy", "status"],
+        "properties": {
+          "objective_ref": { "$ref": "common.schema.json#/$defs/id" },
+          "strategy": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["available", "infeasible", "not_evaluable", "inconclusive"] },
+          "reason": { "type": "string", "minLength": 1 }
         }
       }
     }

@@ -144,6 +144,9 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         status, document = self.request("GET", "/checkpoints/missing-checkpoint")
         self.assertEqual(status, 404)
         self.assertEqual(document, {"error": "checkpoint not found"})
+        status, document = self.request("GET", "/feedback/missing-feedback")
+        self.assertEqual(status, 404)
+        self.assertEqual(document, {"error": "feedback not found"})
 
     def test_plan_submission_rejects_malformed_body(self):
         status, document = self.request("POST", "/plans", {"plan_id": "plan-1"})

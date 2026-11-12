@@ -21,5 +21,6 @@
   "artifact_refs": ["artifact-plan-001"],
   "assumptions": [],
   "gaps": [],
-  "coverage_matrix": [{"objective_ref": "objective-001", "disposition": "planned"}]
+  "coverage_matrix": [{"objective_ref": "objective-001", "disposition": "planned"}],
+  "feasibility": [{"objective_ref": "objective-001", "strategy": "static", "status": "available"}]
 }

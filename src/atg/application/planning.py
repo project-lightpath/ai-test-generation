@@ -103,6 +103,11 @@ class PlanningService:
                 raise PlanningConflictError("plan analysis does not belong to the run")
             if analysis.checkpoint is None:
                 raise PlanningConflictError("plan requires a reviewable analysis")
+            analysis_artifact_id = f"artifact-{analysis.manifest['analysis_id']}"
+            reviewed = analysis.checkpoint.get("reviewed_artifact", {})
+            source_artifact = next((item["artifact"] for item in analysis.artifacts if item["artifact"].get("artifact_id") == analysis_artifact_id), None)
+            if reviewed != source_artifact:
+                raise PlanningConflictError("plan requires the exact approved analysis artifact")
             objectives = analysis.objectives
             if not objectives:
                 raise PlanningConflictError("plan requires at least one objective document")
@@ -175,6 +180,29 @@ def _build_plan(request: PlanningRequest, analysis) -> PlanRecord:
         if artifact["artifact"].get("artifact_id") == f"artifact-{analysis.manifest['analysis_id']}"
     )
     objective_refs = [str(objective["objective_id"]) for objective in analysis.objectives]
+    candidates = {candidate.get("objective_ref"): candidate for candidate in analysis.manifest.get("objective_candidates", [])}
+    coverage = []
+    feasibility = []
+    for objective_id in objective_refs:
+        candidate = candidates.get(objective_id, {})
+        disposition = candidate.get("disposition", "candidate")
+        if disposition == "candidate":
+            coverage_disposition, feasibility_status = "planned", "available"
+        elif disposition == "stated_gap":
+            coverage_disposition, feasibility_status = "stated_gap", "inconclusive"
+        elif disposition == "needs_evidence":
+            coverage_disposition, feasibility_status = "not_evaluable", "not_evaluable"
+        else:
+            coverage_disposition, feasibility_status = "excluded", "infeasible"
+        reason = "; ".join(candidate.get("limitations", [])) or ("Objective candidate is not supported by approved evidence." if coverage_disposition != "planned" else None)
+        row = {"objective_ref": objective_id, "disposition": coverage_disposition}
+        if reason:
+            row["reason"] = reason
+        coverage.append(row)
+        feasibility_row = {"objective_ref": objective_id, "strategy": "static", "status": feasibility_status}
+        if reason:
+            feasibility_row["reason"] = reason
+        feasibility.append(feasibility_row)
     steps = [
         {"step_id": f"step-{objective_id}", "stage": "plan", "action": f"Define validation strategy for {objective_id}.", "expected_evidence": list(next(objective for objective in analysis.objectives if objective["objective_id"] == objective_id).get("evidence_refs", []))}
         for objective_id in objective_refs
@@ -186,7 +214,7 @@ def _build_plan(request: PlanningRequest, analysis) -> PlanRecord:
         "objective_refs": objective_refs, "steps": steps, "status": "draft", "created_at": request.occurred_at,
         "provenance_ref": f"provenance-{request.plan_id}", "artifact_refs": [f"artifact-{request.plan_id}"],
         "assumptions": list(analysis.manifest.get("assumptions", [])), "gaps": list(analysis.manifest.get("gaps", [])),
-        "coverage_matrix": [{"objective_ref": objective_id, "disposition": "planned"} for objective_id in objective_refs],
+        "coverage_matrix": coverage, "feasibility": feasibility,
     }
     artifact = _artifact(f"artifact-{request.plan_id}", "application/vnd.atg.plan+json", manifest)
     provenance = {
