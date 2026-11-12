@@ -219,15 +219,7 @@ class ContractSchemaTests(unittest.TestCase):
         initial = RunState(run_id="run-1", updated_at="2026-11-03T17:00:00Z")
         self._validator("run-state").validate(initial.to_document())
 
-        active = initial.apply(
-            RunEvent(
-                event_id="event-admit",
-                run_id="run-1",
-                event_type="admit",
-                expected_revision=0,
-                occurred_at="2026-11-03T17:00:01Z",
-            )
-        ).state
+        active = RunState(run_id="run-1", status="planning", revision=1, updated_at="2026-11-03T17:00:01Z")
         active = active.apply(
             RunEvent(
                 event_id="event-checkpoint",

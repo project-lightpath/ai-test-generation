@@ -165,7 +165,7 @@ class RunState:
     }
     _CHECKPOINT_PREREQUISITES = {
         "analysis_review": {"admitted", "analyzing"},
-        "plan_review": {"admitted", "planning"},
+        "plan_review": {"planning"},
         "code_review": {"planning", "coding"},
         "execution_review": {"coding", "executing"},
         "quality_review": {"executing", "quality_review"},

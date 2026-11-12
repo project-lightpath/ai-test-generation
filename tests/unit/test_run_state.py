@@ -26,15 +26,15 @@ def event(run_id, event_id, revision, event_type, **kwargs):
     )
 
 
+def planning_state(run_id="run-1"):
+    """Return a planning-stage projection for checkpoint-focused unit tests."""
+    return RunState(run_id=run_id, status="planning", revision=1, updated_at="2026-11-03T17:00:01Z")
+
+
 class RunStateTests(unittest.TestCase):
     def test_plan_submission_binds_active_plan_artifact(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
-        state = state.apply(event("run-1", "e2", 1, "analysis_started")).state
-        state = state.apply(event("run-1", "e3", 2, "analysis_completed")).state
-        state = state.apply(event("run-1", "e4", 3, "checkpoint_created", checkpoint_id="cp-analysis", checkpoint_kind="analysis_review")).state
-        state = state.apply(event("run-1", "e5", 4, "decision_recorded", checkpoint_id="cp-analysis", decision="approved", decision_id="decision-1", actor_id="reviewer-1", actor_role="owner", authorization_ref="auth-1")).state
-        state = state.apply(event("run-1", "e6", 5, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64)).state
+        state = planning_state()
+        state = state.apply(event("run-1", "e1", 1, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64)).state
         self.assertEqual(state.status, "planning")
         self.assertEqual(state.active_plan_id, "plan-1")
         self.assertEqual(state.active_plan_revision, 1)
@@ -153,14 +153,12 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(retry.state, state)
 
     def test_reusing_event_id_with_new_payload_is_rejected(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = RunState.initial("run-1").apply(event("run-1", "e1", 0, "admit")).state
         with self.assertRaises(DuplicateEventError):
             state.apply(event("run-1", "e1", 1, "analysis_started"))
 
     def test_stale_revision_is_rejected(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = RunState.initial("run-1").apply(event("run-1", "e1", 0, "admit")).state
         with self.assertRaises(StaleEventError):
             state.apply(event("run-1", "e2", 0, "analysis_started"))
 
@@ -175,8 +173,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_checkpoint_replacement_requires_explicit_supersession(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -207,8 +204,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_rejected_review_is_terminal_and_cannot_emit_evidence_flow(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -232,8 +228,7 @@ class RunStateTests(unittest.TestCase):
             state.apply(event("run-1", "e4", 3, "analysis_started"))
 
     def test_checkpoint_expiry_returns_to_resumable_stage(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event(
                 "run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1",
@@ -252,11 +247,10 @@ class RunStateTests(unittest.TestCase):
                 occurred_at="2026-11-03T17:10:00.5Z",
             )
         ).state
-        self.assertEqual(state.status, "admitted")
+        self.assertEqual(state.status, "planning")
         self.assertIsNone(state.active_checkpoint_id)
 
-        naive = RunState.initial("run-2")
-        naive = naive.apply(event("run-2", "e1", 0, "admit")).state
+        naive = planning_state("run-2")
         naive = naive.apply(
             event(
                 "run-2", "e2", 1, "checkpoint_created", checkpoint_id="cp-2",
@@ -272,8 +266,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_blocked_run_can_be_explicitly_retried(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -302,8 +295,7 @@ class RunStateTests(unittest.TestCase):
             state.apply(event("run-1", "e2", 1, "retry_requested", reason="retry admission"))
 
     def test_rejected_decision_becomes_terminal_blocked_outcome(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -325,8 +317,7 @@ class RunStateTests(unittest.TestCase):
             state.apply(event("run-1", "e2", 0, "unknown_event"))
 
     def test_checkpoint_replacement_cannot_change_review_kind(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
         ).state
@@ -339,8 +330,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_review_decision_requires_authorization_metadata(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
         ).state
