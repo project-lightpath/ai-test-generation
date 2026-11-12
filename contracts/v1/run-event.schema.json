@@ -10,14 +10,14 @@
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
     "event_id": { "$ref": "common.schema.json#/$defs/id" },
     "run_id": { "$ref": "common.schema.json#/$defs/id" },
-    "event_type": { "enum": ["admit", "admission_blocked", "analysis_started", "analysis_completed", "checkpoint_created", "checkpoint_expired", "decision_recorded", "planning_completed", "generation_started", "generation_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute", "cancel"] },
+    "event_type": { "enum": ["admit", "admission_blocked", "analysis_started", "analysis_completed", "analysis_blocked", "analysis_inconclusive", "checkpoint_created", "checkpoint_expired", "decision_recorded", "planning_completed", "generation_started", "generation_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute", "cancel"] },
     "expected_revision": { "type": "integer", "minimum": 0 },
     "occurred_at": { "$ref": "common.schema.json#/$defs/timestamp" },
     "checkpoint_id": { "$ref": "common.schema.json#/$defs/id" },
     "checkpoint_kind": { "enum": ["analysis_review", "plan_review", "code_review", "execution_review", "quality_review"] },
     "decision": { "enum": ["approved", "rejected", "blocked", "stated_gap"] },
     "supersedes": { "$ref": "common.schema.json#/$defs/id" },
-    "reason": { "type": "string" },
+    "reason": { "type": "string", "minLength": 1 },
     "actor_id": { "$ref": "common.schema.json#/$defs/id" },
     "actor_role": { "type": "string", "minLength": 1 },
     "authorization_ref": { "$ref": "common.schema.json#/$defs/id" },
@@ -53,6 +53,10 @@
         },
         {
           "properties": { "event_type": { "const": "admission_blocked" } },
+          "required": ["reason"]
+        },
+        {
+          "properties": { "event_type": { "enum": ["analysis_blocked", "analysis_inconclusive"] } },
           "required": ["reason"]
         },
         {

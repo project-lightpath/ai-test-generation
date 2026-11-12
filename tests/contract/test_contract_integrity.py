@@ -80,9 +80,59 @@ class ContractIntegrityTests(unittest.TestCase):
             "run-state.json", "request.json", "evidence.json", "objective.json", "plan.json",
             "checkpoint.json", "feedback.json", "preflight.json", "generation.json",
             "execution-base.json", "execution.json", "quality.json", "provenance.json",
-            "signed-differential.json",
+            "signed-differential.json", "analysis.json",
         ]
-        validate_documents([json.loads((root / filename).read_text()) for filename in filenames])
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        validate_documents(documents)
+
+    def test_analysis_requires_same_run_request_and_provenance(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        filenames = ["request.json", "evidence.json", "objective.json", "provenance.json", "analysis.json"]
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        analysis = next(document for document in documents if document.get("contract") == "atg.analysis")
+        analysis["run_id"] = "run-other"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("analysis.request_id belongs to a different run", raised.exception.errors)
+
+    def test_analysis_requires_artifact_closure_and_exact_checkpoint_metadata(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        filenames = ["run-state.json", "request.json", "evidence.json", "objective.json", "provenance.json", "analysis.json", "checkpoint.json"]
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        provenance = next(document for document in documents if document.get("contract") == "atg.provenance")
+        provenance["artifacts"] = []
+        with self.assertRaises(ContractIntegrityError) as missing:
+            validate_documents(documents)
+        self.assertTrue(any("missing provenance artifact" in error for error in missing.exception.errors))
+
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        checkpoint = next(document for document in documents if document.get("contract") == "atg.checkpoint")
+        checkpoint["kind"] = "analysis_review"
+        checkpoint["reviewed_artifact"]["digest"] = "sha256:" + "0" * 64
+        with self.assertRaises(ContractIntegrityError) as mismatch:
+            validate_documents(documents)
+        self.assertIn("analysis_review checkpoint artifact metadata differs from provenance", mismatch.exception.errors)
+
+    def test_analysis_review_rejects_non_manifest_artifact(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        filenames = ["run-state.json", "request.json", "evidence.json", "objective.json", "provenance.json", "analysis.json", "checkpoint.json"]
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        checkpoint = next(document for document in documents if document.get("contract") == "atg.checkpoint")
+        checkpoint["kind"] = "analysis_review"
+        checkpoint["reviewed_artifact"]["artifact_id"] = "artifact-non-manifest"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("analysis_review checkpoint artifact is not referenced by an analysis manifest", raised.exception.errors)
+
+    def test_analysis_rejects_evidence_from_different_repository_revision(self):
+        root = pathlib.Path(__file__).parents[2] / "contracts" / "examples"
+        filenames = ["run-state.json", "request.json", "evidence.json", "objective.json", "provenance.json", "analysis.json", "checkpoint.json"]
+        documents = [json.loads((root / filename).read_text()) for filename in filenames]
+        evidence = next(document for document in documents if document.get("contract") == "atg.evidence")
+        evidence["subject"]["version"] = "different-revision"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("analysis.evidence_refs belongs to a different subject", raised.exception.errors)
 
     def test_complete_evidence_graph_is_consistent(self):
         validate_documents(graph_documents())

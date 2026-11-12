@@ -14,6 +14,7 @@ from atg.domain.run_state import RunEvent, RunState  # noqa: E402
 CONTRACTS = pathlib.Path(__file__).parents[2] / "contracts" / "v1"
 EXPECTED = {
     "request",
+    "analysis",
     "evidence",
     "objective",
     "plan",
@@ -59,6 +60,7 @@ class ContractSchemaTests(unittest.TestCase):
     def test_representative_examples_validate_against_real_schemas(self):
         examples = {
             "request.json": "request",
+            "analysis.json": "analysis",
             "evidence.json": "evidence",
             "objective.json": "objective",
             "plan.json": "plan",
@@ -85,6 +87,28 @@ class ContractSchemaTests(unittest.TestCase):
     def test_invalid_event_fixture_is_rejected_by_event_schema(self):
         with self.assertRaises(ValidationError):
             self._validator("run-event").validate(self._load("invalid", "run-event-missing-decision.json"))
+
+    def test_analysis_gate_events_require_reasons(self):
+        event = self._load("examples", "run-event-checkpoint.json")
+        for event_type in ("analysis_blocked", "analysis_inconclusive"):
+            with self.subTest(event_type=event_type):
+                document = {
+                    "contract": "atg.run_event",
+                    "version": "1.0",
+                    "event_id": f"event-{event_type}",
+                    "run_id": event["run_id"],
+                    "event_type": event_type,
+                    "expected_revision": 2,
+                    "occurred_at": event["occurred_at"],
+                }
+                with self.assertRaises(ValidationError):
+                    self._validator("run-event").validate(document)
+                document["reason"] = "analysis evidence gap"
+                self._validator("run-event").validate(document)
+
+                document["reason"] = ""
+                with self.assertRaises(ValidationError):
+                    self._validator("run-event").validate(document)
 
     def test_unsupported_positive_differential_is_rejected(self):
         with self.assertRaises(ValidationError):
@@ -159,6 +183,13 @@ class ContractSchemaTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self._validator("checkpoint").validate(checkpoint)
 
+    def test_analysis_review_checkpoint_requires_reviewed_artifact(self):
+        checkpoint = self._load("examples", "checkpoint.json")
+        checkpoint["kind"] = "analysis_review"
+        checkpoint.pop("reviewed_artifact")
+        with self.assertRaises(ValidationError):
+            self._validator("checkpoint").validate(checkpoint)
+
     def test_positive_quality_outcome_requires_a_passing_check(self):
         quality = self._load("examples", "quality.json")
         quality["checks"][0]["status"] = "inconclusive"
@@ -168,6 +199,19 @@ class ContractSchemaTests(unittest.TestCase):
     def test_invalid_timestamp_is_rejected_when_format_checking_is_enabled(self):
         request = self._load("examples", "request.json")
         request["submitted_at"] = "2026-99-99T99:99:99Z"
+        with self.assertRaises(ValidationError):
+            self._validator("request").validate(request)
+
+    def test_analyze_mode_may_discover_objectives_but_full_mode_requires_them(self):
+        request = self._load("examples", "request.json")
+        request["mode"] = "analyze"
+        request.pop("objective_ids")
+        self._validator("request").validate(request)
+
+        request["objective_ids"] = []
+        self._validator("request").validate(request)
+
+        request["mode"] = "full"
         with self.assertRaises(ValidationError):
             self._validator("request").validate(request)
 

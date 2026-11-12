@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-lightpath.github.io/ai-test-generation/contracts/v1/analysis.schema.json",
+  "title": "ATG repository analysis manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract", "version", "analysis_id", "run_id", "request_id", "revision",
+    "analyzed_at", "subject", "outcome", "evidence_refs", "objective_refs",
+    "provenance_ref", "artifact_refs", "findings", "assumptions", "gaps"
+  ],
+  "properties": {
+    "contract": { "const": "atg.analysis" },
+    "version": { "$ref": "common.schema.json#/$defs/contract_version" },
+    "analysis_id": { "$ref": "common.schema.json#/$defs/id" },
+    "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "request_id": { "$ref": "common.schema.json#/$defs/id" },
+    "revision": { "type": "integer", "minimum": 0 },
+    "analyzed_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "subject": { "$ref": "common.schema.json#/$defs/identity" },
+    "profile_digest": { "$ref": "common.schema.json#/$defs/digest" },
+    "outcome": {
+      "enum": ["validated", "needs_human_review", "blocked", "not_evaluable", "inconclusive", "stated_gap"]
+    },
+    "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "objective_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "objective_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_id", "objective_ref", "statement", "disposition", "validation_role",
+          "expected_behavior_source", "evidence_refs", "target_refs", "existing_test_refs",
+          "assumptions", "limitations", "safety_flags"
+        ],
+        "properties": {
+          "candidate_id": { "$ref": "common.schema.json#/$defs/id" },
+          "objective_ref": { "$ref": "common.schema.json#/$defs/id" },
+          "statement": { "type": "string", "minLength": 1 },
+          "disposition": { "enum": ["candidate", "duplicate_candidate", "needs_evidence", "unsupported", "stated_gap"] },
+          "validation_role": { "enum": ["exposure", "fix_pinning", "regression", "characterization", "compatibility", "gap_analysis"] },
+          "expected_behavior_source": { "enum": ["attributable", "characterization", "unresolved"] },
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+          "target_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+          "existing_test_refs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "assumptions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "safety_flags": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+          "duplicate_of": { "$ref": "common.schema.json#/$defs/id" }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "disposition": { "const": "duplicate_candidate" } } },
+            "then": { "required": ["duplicate_of"] }
+          },
+          {
+            "if": { "properties": { "disposition": { "const": "candidate" } } },
+            "then": { "properties": { "evidence_refs": { "minItems": 1 } } }
+          }
+        ]
+      }
+    },
+    "provenance_ref": { "$ref": "common.schema.json#/$defs/id" },
+    "artifact_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "status", "required"],
+        "properties": {
+          "capability": { "$ref": "common.schema.json#/$defs/id" },
+          "status": { "enum": ["available", "partial", "unavailable"] },
+          "required": { "type": "boolean" },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "fact_summary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fact_id", "origin", "claim", "evidence_refs", "certainty", "status"],
+        "properties": {
+          "fact_id": { "$ref": "common.schema.json#/$defs/id" },
+          "origin": { "enum": ["supplied", "discovered", "inferred"] },
+          "claim": { "type": "string", "minLength": 1 },
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "minItems": 1, "uniqueItems": true },
+          "certainty": { "enum": ["definite", "possible", "unresolved"] },
+          "status": { "enum": ["emitted", "abstained"] }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "kind", "description"],
+        "properties": {
+          "finding_id": { "$ref": "common.schema.json#/$defs/id" },
+          "kind": { "enum": ["missing", "stale", "conflicting", "ambiguous", "unsupported", "unauthorized", "incomplete"] },
+          "description": { "type": "string", "minLength": 1 },
+          "evidence_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
+          "resolution": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "assumptions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "gaps": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "validated" } } },
+      "then": { "required": ["profile_digest", "evidence_refs"], "properties": { "evidence_refs": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "needs_human_review" } } },
+      "then": { "required": ["evidence_refs"], "properties": { "evidence_refs": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "outcome": { "enum": ["blocked", "not_evaluable", "inconclusive", "stated_gap"] } } },
+      "then": { "required": ["gaps"], "properties": { "gaps": { "minItems": 1 } } }
+    }
+  ]
+}

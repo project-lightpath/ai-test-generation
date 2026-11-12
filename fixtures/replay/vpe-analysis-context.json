@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "0.1.0",
+  "id": "context-java-quarkus-001",
+  "fixtureId": "java-quarkus-001",
+  "framework": "quarkus",
+  "frameworkVersion": "3.17.0",
+  "javaRelease": 21,
+  "analysisScope": "production",
+  "buildEvidence": {
+    "tool": "maven",
+    "command": "./mvnw package",
+    "artifact": "target/application.jar",
+    "fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "frameworkMetadata": [
+    {"kind": "source-annotations", "status": "observed"},
+    {"kind": "runtime-registration", "status": "not_captured"}
+  ],
+  "provenance": {
+    "sourceRepository": "https://git.example/fixture.git",
+    "sourceRevision": "abc123",
+    "sourceFingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "dependencyFingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "buildFingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "toolchainFingerprint": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "analyzerFingerprint": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "profileDigest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "preparedAt": "2026-11-09T20:00:00Z"
+  },
+  "limitations": ["Runtime framework registration metadata was not captured."]
+}

@@ -27,6 +27,16 @@ def event(run_id, event_id, revision, event_type, **kwargs):
 
 
 class RunStateTests(unittest.TestCase):
+    def test_analysis_gate_outcomes_are_terminal_and_reasoned(self):
+        for event_type, expected_status in (("analysis_blocked", "blocked"), ("analysis_inconclusive", "inconclusive")):
+            with self.subTest(event_type=event_type):
+                state = RunState.initial("run-1")
+                state = state.apply(event("run-1", "e1", 0, "admit")).state
+                state = state.apply(event("run-1", "e2", 1, "analysis_started")).state
+                state = state.apply(event("run-1", "e3", 2, event_type, reason="analysis evidence gap")).state
+                self.assertEqual(state.status, expected_status)
+                self.assertEqual(state.terminal_reason, "analysis evidence gap")
+
     def test_full_lifecycle_requires_durable_review_decisions(self):
         state = RunState.initial("run-1")
         state = state.apply(event("run-1", "e1", 0, "admit")).state

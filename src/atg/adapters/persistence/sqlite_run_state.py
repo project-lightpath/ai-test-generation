@@ -15,6 +15,8 @@ from threading import RLock
 from typing import Iterator
 
 from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
+from atg.application.analysis import AnalysisConflictError, AnalysisRecord
+from atg.domain.schema_validation import ContractValidationError
 from atg.domain.run_state import (
     DuplicateEventError,
     InvalidTransitionError,
@@ -62,6 +64,13 @@ class SQLiteRunStateStore:
                 result_json TEXT NOT NULL,
                 terminal_json TEXT
             );
+            CREATE TABLE IF NOT EXISTS analyses (
+                analysis_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                request_digest TEXT NOT NULL,
+                bundle_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS analyses_by_run ON analyses(run_id);
             """
         )
         admission_columns = {
@@ -101,6 +110,84 @@ class SQLiteRunStateStore:
                 (run_id,),
             ).fetchone()
         return json.loads(row["terminal_json"]) if row is not None and row["terminal_json"] else None
+
+    def get_admission_for_run(self, run_id: str) -> AdmissionResult | None:
+        """Load the durable admission result associated with a run."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT result_json FROM admissions WHERE json_extract(result_json, '$.run_id') = ?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _admission_from_document(json.loads(row["result_json"]))
+
+    def get_analysis(self, analysis_id: str) -> AnalysisRecord | None:
+        """Load a completed analysis bundle by stable identity."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT analysis_id, run_id, request_digest, bundle_json FROM analyses WHERE analysis_id = ?", (analysis_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            record = AnalysisRecord.from_storage_document(json.loads(row["bundle_json"]))
+            if (
+                row["analysis_id"] != record.manifest.get("analysis_id")
+                or row["run_id"] != record.manifest.get("run_id")
+                or row["request_digest"] != record.request_digest
+            ):
+                raise ContractValidationError("persisted analysis row metadata differs from bundle")
+            return record
+        except ContractValidationError:
+            raise
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ContractValidationError("persisted analysis bundle is corrupt") from exc
+
+    def record_analysis(
+        self,
+        record: AnalysisRecord,
+        start_event: RunEvent,
+        outcome_event: RunEvent,
+        checkpoint_event: RunEvent | None,
+    ) -> AnalysisRecord:
+        """Atomically persist analysis output and its gated lifecycle outcome."""
+        analysis_id = str(record.manifest["analysis_id"])
+        run_id = str(record.manifest["run_id"])
+        _validate_analysis_record(record, start_event, outcome_event, checkpoint_event)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT request_digest, bundle_json FROM analyses WHERE analysis_id = ?",
+                    (analysis_id,),
+                ).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != record.request_digest:
+                        raise AnalysisConflictError("analysis identity is bound to different inputs")
+                    stored_record = AnalysisRecord.from_storage_document(
+                        json.loads(existing["bundle_json"]), duplicate=True
+                    )
+                    self._connection.execute("COMMIT")
+                    return stored_record
+                self._apply_locked(start_event)
+                self._apply_locked(outcome_event)
+                if checkpoint_event is not None:
+                    self._apply_locked(checkpoint_event)
+                self._connection.execute(
+                    "INSERT INTO analyses(analysis_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)",
+                    (
+                        analysis_id,
+                        run_id,
+                        record.request_digest,
+                        json.dumps(record.to_storage_document(), sort_keys=True),
+                    ),
+                )
+                self._connection.execute("COMMIT")
+                return record
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
 
     def record_admission(self, key: str, request_digest: str, result: AdmissionResult, event: RunEvent) -> AdmissionResult:
         """Atomically persist admission, terminal record, and run transition."""
@@ -186,6 +273,7 @@ class SQLiteRunStateStore:
                 raise
 
     def _apply_locked(self, event: RunEvent, *, allow_unrecorded_admission: bool = False) -> TransitionResult:
+        """Apply an event while the caller owns the active SQLite transaction."""
         payload = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
         digest = event_fingerprint(event)
         existing = self._connection.execute(
@@ -300,4 +388,45 @@ def _admission_from_document(document: dict) -> AdmissionResult:
         reason=document.get("reason"),
         limitations=tuple(document.get("limitations", [])),
         identities=document.get("identities", {}),
+        admitted_capabilities=tuple(document.get("admitted_capabilities", [])),
     )
+
+
+def _validate_analysis_record(
+    record: AnalysisRecord,
+    start_event: RunEvent,
+    outcome_event: RunEvent,
+    checkpoint_event: RunEvent | None,
+) -> None:
+    """Reject bundles whose manifest, artifact, checkpoint, and events diverge."""
+    manifest = record.manifest
+    checkpoint = record.checkpoint
+    run_id = manifest.get("run_id")
+    if start_event.run_id != run_id or outcome_event.run_id != run_id:
+        raise ValueError("analysis bundle and lifecycle event must belong to one run")
+    if start_event.event_type != "analysis_started":
+        raise ValueError("analysis persistence requires an analysis_started event")
+    if checkpoint is None:
+        expected = "analysis_blocked" if manifest.get("outcome") == "blocked" else "analysis_inconclusive"
+        if checkpoint_event is not None or outcome_event.event_type != expected:
+            raise ValueError("non-reviewable analysis requires its matching terminal event")
+        return
+    if checkpoint_event is None or checkpoint_event.run_id != run_id or checkpoint.get("run_id") != run_id:
+        raise ValueError("analysis bundle and checkpoint events must belong to one run")
+    if outcome_event.event_type != "analysis_completed":
+        raise ValueError("reviewable analysis persistence requires an analysis_completed event")
+    if checkpoint_event.event_type != "checkpoint_created" or checkpoint_event.checkpoint_kind != "analysis_review":
+        raise ValueError("analysis persistence requires an analysis review checkpoint event")
+    if checkpoint_event.checkpoint_id != checkpoint.get("checkpoint_id"):
+        raise ValueError("checkpoint event and document identities differ")
+    reviewed = checkpoint.get("reviewed_artifact")
+    if not isinstance(reviewed, dict) or reviewed.get("artifact_id") not in manifest.get("artifact_refs", []):
+        raise ValueError("analysis checkpoint must review a referenced analysis artifact")
+    matching = [
+        artifact.get("artifact")
+        for artifact in record.artifacts
+        if isinstance(artifact.get("artifact"), dict)
+        and artifact["artifact"].get("artifact_id") == reviewed.get("artifact_id")
+    ]
+    if matching != [reviewed]:
+        raise ValueError("analysis checkpoint artifact metadata differs from persisted output")

@@ -57,6 +57,47 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             require_run(document, "request.run_id")
             for objective_id in document.get("objective_ids", []):
                 require("atg.objective", objective_id, "request.objective_ids")
+        elif contract == "atg.analysis":
+            require_run(document, "analysis.run_id")
+            _require_related(document, "atg.request", document.get("request_id"), require, errors, "analysis.request_id")
+            for evidence_id in document.get("evidence_refs", []):
+                evidence = require("atg.evidence", evidence_id, "analysis.evidence_refs")
+                if evidence is not None and evidence.get("subject") != document.get("subject"):
+                    errors.append("analysis.evidence_refs belongs to a different subject")
+            for objective_id in document.get("objective_refs", []):
+                require("atg.objective", objective_id, "analysis.objective_refs")
+            provenance = _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "analysis.provenance_ref")
+            if provenance is not None:
+                provenance_artifacts = {
+                    artifact.get("artifact_id"): artifact
+                    for artifact in provenance.get("artifacts", [])
+                    if isinstance(artifact, Mapping)
+                }
+                for artifact_id in document.get("artifact_refs", []):
+                    if artifact_id not in provenance_artifacts:
+                        errors.append(f"analysis.artifact_refs references missing provenance artifact {artifact_id}")
+                if set(document.get("artifact_refs", [])) != set(provenance_artifacts):
+                    errors.append("analysis artifact_refs must exactly match provenance artifacts")
+            candidates = document.get("objective_candidates", [])
+            candidate_ids = {candidate.get("candidate_id") for candidate in candidates}
+            if len(candidate_ids) != len(candidates):
+                errors.append("analysis.objective_candidates requires unique candidate IDs")
+            for candidate in candidates:
+                objective_ref = candidate.get("objective_ref")
+                require("atg.objective", objective_ref, "analysis.objective_candidates.objective_ref")
+                if objective_ref not in document.get("objective_refs", []):
+                    errors.append("analysis candidate objective_ref is absent from objective_refs")
+                _require_evidence_refs(
+                    candidate.get("evidence_refs", []), require, errors,
+                    "analysis.objective_candidates.evidence_refs",
+                )
+                duplicate_of = candidate.get("duplicate_of")
+                if duplicate_of is not None and duplicate_of not in candidate_ids:
+                    errors.append("analysis duplicate candidate references a missing candidate")
+            for fact in document.get("fact_summary", []):
+                _require_evidence_refs(fact.get("evidence_refs", []), require, errors, "analysis.fact_summary.evidence_refs")
+            for finding in document.get("findings", []):
+                _require_evidence_refs(finding.get("evidence_refs", []), require, errors, "analysis.finding.evidence_refs")
         elif contract == "atg.run_admission":
             request = _require_related(document, "atg.request", document.get("request_id"), require, errors, "run_admission.request_id")
             if request is not None and request.get("run_id") != document.get("run_id"):
@@ -68,6 +109,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
         elif contract == "atg.objective":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "objective.evidence_refs")
         elif contract in {
+            "atg.analysis",
             "atg.checkpoint",
             "atg.feedback",
             "atg.generation",
@@ -91,6 +133,20 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 errors,
                 "feedback.checkpoint_id",
             )
+        if contract == "atg.checkpoint" and document.get("kind") == "analysis_review":
+            reviewed = document.get("reviewed_artifact") or {}
+            analyses = [candidate for candidate in docs if candidate.get("contract") == "atg.analysis" and candidate.get("run_id") == document.get("run_id")]
+            matching_analyses = [candidate for candidate in analyses if reviewed.get("artifact_id") in candidate.get("artifact_refs", [])]
+            if not matching_analyses:
+                errors.append("analysis_review checkpoint artifact is not referenced by an analysis manifest")
+            for analysis in matching_analyses:
+                expected_artifact_id = f"artifact-{analysis.get('analysis_id')}"
+                if reviewed.get("artifact_id") != expected_artifact_id or reviewed.get("media_type") != "application/vnd.atg.analysis+json":
+                    errors.append("analysis_review checkpoint must reference the analysis manifest artifact")
+                provenance = index.get(("atg.provenance", analysis.get("provenance_ref")))
+                artifacts = provenance.get("artifacts", []) if provenance is not None else []
+                if reviewed not in artifacts:
+                    errors.append("analysis_review checkpoint artifact metadata differs from provenance")
         if contract == "atg.run_terminal":
             request = _require_related(
                 document, "atg.request", document.get("request_id"), require, errors,
@@ -178,6 +234,7 @@ def _document_id(document: Mapping[str, object]) -> str | None:
     """Return the contract-specific identifier from a document."""
     contract_fields = {
         "atg.request": "request_id",
+        "atg.analysis": "analysis_id",
         "atg.evidence": "evidence_id",
         "atg.objective": "objective_id",
         "atg.plan": "plan_id",
@@ -201,6 +258,7 @@ def _document_id(document: Mapping[str, object]) -> str | None:
         return document[preferred] if isinstance(document.get(preferred), str) else None
     for field in (
         "request_id",
+        "analysis_id",
         "evidence_id",
         "objective_id",
         "plan_id",

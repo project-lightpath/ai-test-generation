@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "0.1.0",
+  "artifact": "SemanticCallFacts",
+  "contextId": "context-java-quarkus-001",
+  "framework": "quarkus",
+  "runMetadata": {
+    "sourceRepository": "https://git.example/fixture.git",
+    "sourceRevision": "abc123",
+    "preparedAt": "2026-11-09T20:01:00Z",
+    "provider": "SootUp",
+    "providerVersion": "3.0.1"
+  },
+  "providerFacts": [
+    {
+      "id": "provider-call-001",
+      "caller": "com.example.Resource#handle",
+      "callee": "com.example.Service#process",
+      "relationshipType": "invokes",
+      "certainty": "definite",
+      "status": "emitted",
+      "claim": "Resource.handle invokes Service.process.",
+      "evidence": [
+        {"kind": "call-site", "path": "src/main/java/com/example/Resource.java", "line": 27}
+      ]
+    }
+  ],
+  "frameworkFacts": [
+    {
+      "id": "framework-route-001",
+      "caller": "quarkus-runtime",
+      "callee": "com.example.Resource#handle",
+      "relationshipType": "framework_entrypoint",
+      "certainty": "possible",
+      "status": "emitted",
+      "claim": "Quarkus may register Resource.handle as an HTTP entrypoint.",
+      "evidence": [
+        {"kind": "source-annotation", "path": "src/main/java/com/example/Resource.java", "line": 18}
+      ],
+      "limitation": "Candidate-level runtime registration evidence was not captured."
+    }
+  ],
+  "limitations": ["Reflection and dynamic proxy targets remain unresolved."]
+}

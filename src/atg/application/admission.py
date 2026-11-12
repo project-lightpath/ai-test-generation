@@ -90,6 +90,7 @@ class AdmissionResult:
     reason: str | None = None
     limitations: tuple[Mapping[str, object], ...] = ()
     identities: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
+    admitted_capabilities: tuple[str, ...] = ()
 
     def to_document(self) -> dict[str, object]:
         """Serialize the admission result using the public contract shape."""
@@ -104,6 +105,7 @@ class AdmissionResult:
             "status": self.status,
             "request_digest": self.request_digest,
             "identities": dict(self.identities),
+            "admitted_capabilities": list(self.admitted_capabilities),
         }
         optional = {
             "platform_readiness_id": self.platform_readiness_id,
@@ -197,6 +199,7 @@ class AdmissionService:
                 for ref in check.evidence_refs
             })),
             identities=_request_identities(request),
+            admitted_capabilities=tuple(sorted(request.requested_capabilities)) if status == "admitted" else (),
         )
         event = RunEvent(
             event_id=f"{result.admission_id}-event",
@@ -238,7 +241,7 @@ def evaluate_check(check, request) -> CheckResult:
     """Evaluate a check and convert adapter exceptions into check results."""
     try:
         return check.evaluate(request)
-    except Exception as exc:  # boundary adapters are untrusted
+    except Exception:  # boundary adapters are untrusted
         required = bool(getattr(check, "required", getattr(check, "required_check", True)))
         return CheckResult(
             name=getattr(check, "name", check.__class__.__name__),
@@ -246,5 +249,5 @@ def evaluate_check(check, request) -> CheckResult:
             status="fail" if required else "not_run",
             category=getattr(check, "category", "self_verification"),
             capability=getattr(check, "capability", None),
-            detail=f"check evaluation failed: {exc}",
+            detail="check evaluation failed safely",
         )
