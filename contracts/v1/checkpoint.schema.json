@@ -55,6 +55,17 @@
     {
       "if": { "properties": { "kind": { "const": "analysis_review" } } },
       "then": { "required": ["reviewed_artifact"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "plan_review" } } },
+      "then": {
+        "required": ["reviewed_artifact"],
+        "properties": {
+          "reviewed_artifact": {
+            "properties": { "media_type": { "const": "application/vnd.atg.plan+json" } }
+          }
+        }
+      }
     }
   ]
 }

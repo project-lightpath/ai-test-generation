@@ -76,8 +76,6 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 for artifact_id in document.get("artifact_refs", []):
                     if artifact_id not in provenance_artifacts:
                         errors.append(f"analysis.artifact_refs references missing provenance artifact {artifact_id}")
-                if set(document.get("artifact_refs", [])) != set(provenance_artifacts):
-                    errors.append("analysis artifact_refs must exactly match provenance artifacts")
             candidates = document.get("objective_candidates", [])
             candidate_ids = {candidate.get("candidate_id") for candidate in candidates}
             if len(candidate_ids) != len(candidates):
@@ -104,8 +102,26 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 errors.append("run_admission.request_id belongs to a different run")
         elif contract == "atg.plan":
             require_run(document, "plan.run_id")
+            analysis = _require_related(document, "atg.analysis", document.get("analysis_id"), require, errors, "plan.analysis_id")
+            if analysis is not None:
+                if analysis.get("run_id") != document.get("run_id"):
+                    errors.append("plan.analysis_id belongs to a different run")
+                if document.get("analysis_artifact", {}).get("artifact_id") not in analysis.get("artifact_refs", []):
+                    errors.append("plan.analysis_artifact is not referenced by analysis")
+                if document.get("subject") != analysis.get("subject"):
+                    errors.append("plan subject differs from analysis subject")
             for objective_id in document.get("objective_refs", []):
                 require("atg.objective", objective_id, "plan.objective_refs")
+            coverage = document.get("coverage_matrix", [])
+            coverage_ids = [row.get("objective_ref") for row in coverage]
+            if len(coverage_ids) != len(set(coverage_ids)):
+                errors.append("plan.coverage_matrix requires unique objective references")
+            if set(coverage_ids) != set(document.get("objective_refs", [])):
+                errors.append("plan.coverage_matrix must cover every plan objective exactly once")
+            step_ids = [step.get("step_id") for step in document.get("steps", [])]
+            if len(step_ids) != len(set(step_ids)):
+                errors.append("plan.steps requires unique step IDs")
+            _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "plan.provenance_ref")
         elif contract == "atg.objective":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "objective.evidence_refs")
         elif contract in {
@@ -147,6 +163,20 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 artifacts = provenance.get("artifacts", []) if provenance is not None else []
                 if reviewed not in artifacts:
                     errors.append("analysis_review checkpoint artifact metadata differs from provenance")
+        if contract == "atg.checkpoint" and document.get("kind") == "plan_review":
+            reviewed = document.get("reviewed_artifact") or {}
+            plans = [candidate for candidate in docs if candidate.get("contract") == "atg.plan" and candidate.get("run_id") == document.get("run_id")]
+            matching_plans = [plan for plan in plans if reviewed.get("artifact_id") in plan.get("artifact_refs", [])]
+            if not matching_plans:
+                errors.append("plan_review checkpoint artifact is not referenced by a plan manifest")
+            for plan in matching_plans:
+                expected_artifact_id = f"artifact-{plan.get('plan_id')}"
+                if reviewed.get("artifact_id") != expected_artifact_id or reviewed.get("media_type") != "application/vnd.atg.plan+json":
+                    errors.append("plan_review checkpoint must reference the plan manifest artifact")
+                provenance = index.get(("atg.provenance", plan.get("provenance_ref")))
+                artifacts = provenance.get("artifacts", []) if provenance is not None else []
+                if reviewed not in artifacts:
+                    errors.append("plan_review checkpoint artifact metadata differs from provenance")
         if contract == "atg.run_terminal":
             request = _require_related(
                 document, "atg.request", document.get("request_id"), require, errors,

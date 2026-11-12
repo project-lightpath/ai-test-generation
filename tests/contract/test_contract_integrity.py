@@ -19,10 +19,21 @@ def graph_documents():
         "statement": "Validate the regression", "kind": "regression", "priority": "high",
         "acceptance": ["The regression is detected"], "evidence_refs": [],
     }
+    analysis = {
+        "contract": "atg.analysis", "version": "1.0", "analysis_id": "analysis-1", "run_id": "run-1",
+        "request_id": "request-1", "revision": 1, "analyzed_at": "2026-11-03T17:00:00Z",
+        "subject": {"kind": "git-repository", "id": "repo-1", "version": "abc123"},
+        "outcome": "stated_gap", "evidence_refs": [], "objective_refs": [], "objective_candidates": [],
+        "provenance_ref": "provenance-1", "artifact_refs": ["artifact-analysis-1"],
+        "findings": [], "assumptions": [], "gaps": ["No analysis evidence in this integrity fixture."],
+    }
     plan = {
         "contract": "atg.plan", "version": "1.0", "plan_id": "plan-1", "run_id": "run-1",
+        "analysis_id": "analysis-1", "analysis_artifact": {"artifact_id": "artifact-analysis-1", "media_type": "application/vnd.atg.analysis+json", "digest": "sha256:" + "a" * 64},
+        "analysis_revision": 1, "subject": {"kind": "git-repository", "id": "repo-1", "version": "abc123"}, "plan_revision": 1,
         "objective_refs": ["objective-1"], "steps": [{"step_id": "step-1", "stage": "execute", "action": "run tests"}],
-        "status": "approved", "created_at": "2026-11-03T17:00:00Z",
+        "status": "approved", "created_at": "2026-11-03T17:00:00Z", "provenance_ref": "provenance-1", "artifact_refs": ["artifact-plan-1"],
+        "coverage_matrix": [{"objective_ref": "objective-1", "disposition": "planned"}],
     }
     generation = {
         "contract": "atg.generation", "version": "1.0", "generation_id": "generation-1",
@@ -44,6 +55,10 @@ def graph_documents():
     }
     provenance = {
         "contract": "atg.provenance", "version": "1.0", "provenance_id": "provenance-1", "run_id": "run-1",
+        "artifacts": [
+            {"artifact_id": "artifact-analysis-1", "media_type": "application/vnd.atg.analysis+json", "digest": "sha256:" + "a" * 64},
+            {"artifact_id": "artifact-plan-1", "media_type": "application/vnd.atg.plan+json", "digest": "sha256:" + "b" * 64},
+        ],
     }
     differential = {
         "contract": "atg.signed_differential", "version": "1.0", "differential_id": "differential-1",
@@ -54,7 +69,7 @@ def graph_documents():
         "contract": "atg.request", "version": "1.0", "request_id": "request-1", "run_id": "run-1",
         "objective_ids": ["objective-1"],
     }
-    return [run, request, objective, plan, generation, *executions, quality, provenance, differential]
+    return [run, request, objective, analysis, plan, generation, *executions, quality, provenance, differential]
 
 
 class ContractIntegrityTests(unittest.TestCase):
@@ -108,6 +123,11 @@ class ContractIntegrityTests(unittest.TestCase):
         documents = [json.loads((root / filename).read_text()) for filename in filenames]
         checkpoint = next(document for document in documents if document.get("contract") == "atg.checkpoint")
         checkpoint["kind"] = "analysis_review"
+        checkpoint["reviewed_artifact"] = {
+            "artifact_id": "artifact-analysis-001",
+            "media_type": "application/vnd.atg.analysis+json",
+            "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        }
         checkpoint["reviewed_artifact"]["digest"] = "sha256:" + "0" * 64
         with self.assertRaises(ContractIntegrityError) as mismatch:
             validate_documents(documents)
