@@ -386,8 +386,12 @@ class RunState:
             (self.completed_generation_id, self.completed_generation_artifact_id, self.completed_generation_artifact_digest)
         ):
             raise InvalidTransitionError("code_review requires a completed generation and artifact identity")
+        if event.checkpoint_kind == "code_review" and self.generation_in_progress:
+            raise InvalidTransitionError("code_review cannot begin while generation is in progress")
         if event.checkpoint_id in self.superseded_checkpoint_ids:
             raise InvalidTransitionError("checkpoint id was already superseded")
+        if event.checkpoint_id in self.expired_checkpoint_ids:
+            raise InvalidTransitionError("checkpoint id was already expired")
         if self.active_checkpoint_id is not None:
             superseded = self.superseded_checkpoint_ids + (self.active_checkpoint_id,)
         else:
@@ -615,7 +619,15 @@ class RunState:
 
 def event_fingerprint(event: RunEvent) -> str:
     """Return the SHA-256 fingerprint of an event payload."""
-    payload = json.dumps(event.__dict__, sort_keys=True, separators=(",", ":"))
+    legacy_optional = {
+        "plan_id", "plan_revision", "plan_artifact_id", "plan_artifact_digest",
+        "feedback_id", "generation_id", "artifact_id", "artifact_digest",
+    }
+    values = {
+        key: value for key, value in event.__dict__.items()
+        if key not in legacy_optional or value is not None
+    }
+    payload = json.dumps(values, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

@@ -12,7 +12,7 @@
     "run_id": { "$ref": "common.schema.json#/$defs/id" },
     "kind": { "enum": ["analysis_review", "plan_review", "code_review", "execution_review", "quality_review"] },
     "revision": { "type": "integer", "minimum": 0 },
-    "state": { "enum": ["pending", "approved", "rejected", "expired", "superseded"] },
+    "state": { "enum": ["pending", "approved", "rejected", "blocked", "stated_gap", "expired", "superseded"] },
     "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
     "expires_at": { "$ref": "common.schema.json#/$defs/timestamp" },
     "superseded_by": { "$ref": "common.schema.json#/$defs/id" },
@@ -37,12 +37,24 @@
       "then": { "required": ["decision"] }
     },
     {
+      "if": { "properties": { "state": { "enum": ["blocked", "stated_gap"] } } },
+      "then": { "required": ["decision"] }
+    },
+    {
       "if": { "properties": { "state": { "const": "approved" } } },
       "then": { "properties": { "decision": { "properties": { "value": { "const": "approved" } } } } }
     },
     {
       "if": { "properties": { "state": { "const": "rejected" } } },
       "then": { "properties": { "decision": { "properties": { "value": { "const": "rejected" } } } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "blocked" } } },
+      "then": { "properties": { "decision": { "properties": { "value": { "const": "blocked" } } } } }
+    },
+    {
+      "if": { "properties": { "state": { "const": "stated_gap" } } },
+      "then": { "properties": { "decision": { "properties": { "value": { "const": "stated_gap" } } } } }
     },
     {
       "if": { "properties": { "state": { "const": "superseded" } } },

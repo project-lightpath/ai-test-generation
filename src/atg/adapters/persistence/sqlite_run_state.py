@@ -95,6 +95,7 @@ class SQLiteRunStateStore:
             );
             """
         )
+        self._backfill_checkpoint_projections()
         admission_columns = {
             row["name"] for row in self._connection.execute("PRAGMA table_info(admissions)")
         }
@@ -113,6 +114,23 @@ class SQLiteRunStateStore:
         """Close the SQLite connection."""
         with self._lock:
             self._connection.close()
+
+    def _backfill_checkpoint_projections(self) -> None:
+        """Rebuild missing analysis/plan checkpoint rows for pre-upgrade databases."""
+        rows = self._connection.execute(
+            "SELECT run_id, bundle_json FROM analyses UNION ALL SELECT run_id, bundle_json FROM plans"
+        ).fetchall()
+        for row in rows:
+            try:
+                bundle = json.loads(row["bundle_json"])
+                checkpoint = bundle.get("checkpoint")
+                if isinstance(checkpoint, dict) and checkpoint.get("checkpoint_id"):
+                    self._connection.execute(
+                        "INSERT OR IGNORE INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)",
+                        (checkpoint["checkpoint_id"], row["run_id"], checkpoint.get("kind", "unknown"), json.dumps(checkpoint, sort_keys=True)),
+                    )
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
 
     def get_admission(self, idempotency_key: str) -> AdmissionResult | None:
         """Load an admission result by transport idempotency key."""
@@ -403,10 +421,25 @@ class SQLiteRunStateStore:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 result = self._apply_locked(event)
-                if event.event_type == "decision_recorded":
-                    self._sync_checkpoint_decision_locked(event)
-                elif event.event_type == "checkpoint_expired":
-                    self._sync_checkpoint_state_locked(event.checkpoint_id, "expired")
+                if not result.duplicate:
+                    if event.event_type == "checkpoint_created":
+                        exists = self._connection.execute(
+                            "SELECT 1 FROM checkpoints WHERE checkpoint_id = ?", (event.checkpoint_id,)
+                        ).fetchone()
+                        if exists is None:
+                            projection = {
+                                "contract": "atg.checkpoint", "version": "1.0", "checkpoint_id": event.checkpoint_id,
+                                "run_id": event.run_id, "kind": event.checkpoint_kind, "revision": result.state.revision,
+                                "state": "pending", "created_at": event.occurred_at,
+                            }
+                            self._connection.execute(
+                                "INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)",
+                                (event.checkpoint_id, event.run_id, event.checkpoint_kind, json.dumps(projection, sort_keys=True)),
+                            )
+                    if event.event_type == "decision_recorded":
+                        self._sync_checkpoint_decision_locked(event)
+                    elif event.event_type == "checkpoint_expired":
+                        self._sync_checkpoint_state_locked(event.checkpoint_id, "expired")
                 self._connection.execute("COMMIT")
                 return result
             except Exception:
@@ -427,9 +460,9 @@ class SQLiteRunStateStore:
             "SELECT document_json FROM checkpoints WHERE checkpoint_id = ?", (event.checkpoint_id,)
         ).fetchone()
         if row is None:
-            return
+            raise ContractValidationError("decision targets a missing checkpoint projection")
         checkpoint = json.loads(row["document_json"])
-        checkpoint["state"] = "approved" if event.decision == "approved" else "rejected"
+        checkpoint["state"] = event.decision if event.decision in {"blocked", "stated_gap"} else ("approved" if event.decision == "approved" else "rejected")
         checkpoint["decision"] = {
             "decision_id": event.decision_id,
             "reviewer": {

@@ -271,6 +271,8 @@ def validate_plan_record(record: PlanRecord) -> None:
         encoded = json.dumps(stored["content"], sort_keys=True, separators=(",", ":")).encode()
         if metadata["digest"] != "sha256:" + hashlib.sha256(encoded).hexdigest() or metadata["size_bytes"] != len(encoded):
             raise ContractValidationError("plan artifact metadata mismatch")
+        if stored.get("content", {}).get("steps") != record.manifest.get("steps"):
+            raise ContractValidationError("plan artifact steps differ from manifest steps")
     if record.manifest["artifact_refs"] != list(artifacts):
         raise ContractValidationError("plan artifact references are not closed")
     if record.checkpoint["reviewed_artifact"] != artifacts[f"artifact-{record.manifest['plan_id']}"]:
