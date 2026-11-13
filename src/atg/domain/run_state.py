@@ -80,6 +80,9 @@ class RunEvent:
     plan_artifact_id: str | None = None
     plan_artifact_digest: str | None = None
     feedback_id: str | None = None
+    generation_id: str | None = None
+    artifact_id: str | None = None
+    artifact_digest: str | None = None
 
     def __post_init__(self) -> None:
         """Validate event identity, payload, and event-specific requirements."""
@@ -102,12 +105,18 @@ class RunEvent:
             value = getattr(self, field_name)
             if value is not None:
                 validate_identifier(value, field_name)
+        for field_name in ("generation_id", "artifact_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                validate_identifier(value, field_name)
         if self.feedback_id is not None:
             validate_identifier(self.feedback_id, "feedback_id")
         if self.plan_revision is not None and (not isinstance(self.plan_revision, int) or self.plan_revision < 1):
             raise InvalidEventError("plan_revision must be a positive integer")
         if self.plan_artifact_digest is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.plan_artifact_digest):
             raise InvalidEventError("plan_artifact_digest must be a sha256 digest")
+        if self.artifact_digest is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.artifact_digest):
+            raise InvalidEventError("artifact_digest must be a sha256 digest")
         for field_name in ("actor_role", "reason"):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, str):
@@ -129,6 +138,12 @@ class RunEvent:
             raise InvalidEventError(f"{self.event_type} requires a reason")
         if self.event_type == "return_to_plan" and not self.feedback_id:
             raise InvalidEventError("return_to_plan requires feedback_id")
+        if self.event_type == "generation_started" and not self.generation_id:
+            raise InvalidEventError("generation_started requires generation_id")
+        if self.event_type == "generation_completed" and not all(
+            (self.generation_id, self.artifact_id, self.artifact_digest)
+        ):
+            raise InvalidEventError("generation_completed requires generation and artifact identity")
 
 
 @dataclass(frozen=True)
@@ -154,7 +169,14 @@ class RunState:
     active_plan_revision: int | None = None
     active_plan_artifact_id: str | None = None
     active_plan_artifact_digest: str | None = None
+    active_feedback_id: str | None = None
+    active_generation_id: str | None = None
+    generation_in_progress: bool = False
+    completed_generation_id: str | None = None
+    completed_generation_artifact_id: str | None = None
+    completed_generation_artifact_digest: str | None = None
     superseded_checkpoint_ids: tuple[str, ...] = ()
+    expired_checkpoint_ids: tuple[str, ...] = ()
     processed_event_ids: tuple[str, ...] = ()
     event_fingerprints: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
     terminal_reason: str | None = None
@@ -202,7 +224,7 @@ class RunState:
         "quality_gap": {"quality_review": "stated_gap"},
         "retry_requested": {"blocked": "admitted", "inconclusive": "admitted"},
         "return_to_analyze": {"analyzing": "analyzing", "analysis_review": "analyzing", "planning": "analyzing", "plan_review": "analyzing", "coding": "analyzing", "code_review": "analyzing", "executing": "analyzing", "execution_review": "analyzing", "quality_review": "analyzing"},
-        "return_to_plan": {"analysis_review": "planning", "planning": "planning", "plan_review": "planning", "coding": "planning", "code_review": "planning", "executing": "planning", "execution_review": "planning", "quality_review": "planning"},
+        "return_to_plan": {"planning": "planning", "plan_review": "planning", "coding": "planning", "code_review": "planning", "executing": "planning", "execution_review": "planning", "quality_review": "planning"},
         "return_to_code": {"coding": "coding", "code_review": "coding", "executing": "coding", "execution_review": "coding", "quality_review": "coding"},
         "return_to_execute": {"executing": "executing", "execution_review": "executing", "quality_review": "executing"},
     }
@@ -262,6 +284,11 @@ class RunState:
                 raise InvalidTransitionError(
                     f"cannot apply {event.event_type!r} while run is {self.status!r}"
                 ) from exc
+            if event.event_type == "generation_completed":
+                if not self.generation_in_progress or event.generation_id != self.active_generation_id:
+                    raise InvalidTransitionError("generation_completed must follow its generation_started event")
+            if event.event_type == "plan_submitted" and self.active_plan_revision is not None and event.plan_revision <= self.active_plan_revision:
+                raise InvalidTransitionError("plan revision must supersede the active plan revision")
             clear_checkpoint = event.event_type == "retry_requested" or event.event_type.startswith("return_to_") or next_status in self._TERMINAL
             next_state = self._replace(
                 event,
@@ -274,6 +301,30 @@ class RunState:
                         "active_plan_artifact_digest": event.plan_artifact_digest,
                     }
                     if event.event_type == "plan_submitted" else {}
+                ),
+                generation_in_progress=(
+                    True if event.event_type == "generation_started"
+                    else False if event.event_type == "generation_completed"
+                    else False if event.event_type == "plan_submitted" or event.event_type == "return_to_plan"
+                    else self.generation_in_progress
+                ),
+                **(
+                    {
+                        "active_generation_id": event.generation_id,
+                        "completed_generation_id": event.generation_id,
+                        "completed_generation_artifact_id": event.artifact_id,
+                        "completed_generation_artifact_digest": event.artifact_digest,
+                    }
+                    if event.event_type == "generation_completed" else
+                    {"active_generation_id": event.generation_id}
+                    if event.event_type == "generation_started" else {}
+                    if event.event_type not in {"plan_submitted", "return_to_plan"} else
+                    {
+                        "active_generation_id": None,
+                        "completed_generation_id": None,
+                        "completed_generation_artifact_id": None,
+                        "completed_generation_artifact_digest": None,
+                    }
                 ),
                 terminal_reason=(
                     None
@@ -290,6 +341,10 @@ class RunState:
                     }
                     if clear_checkpoint
                     else {}
+                ),
+                **(
+                    {"active_feedback_id": event.feedback_id}
+                    if event.event_type == "return_to_plan" else {}
                 ),
             )
 
@@ -327,6 +382,10 @@ class RunState:
             )
         if event.checkpoint_kind == "plan_review" and self.active_plan_id is None:
             raise InvalidTransitionError("plan_review requires a submitted plan artifact")
+        if event.checkpoint_kind == "code_review" and not all(
+            (self.completed_generation_id, self.completed_generation_artifact_id, self.completed_generation_artifact_digest)
+        ):
+            raise InvalidTransitionError("code_review requires a completed generation and artifact identity")
         if event.checkpoint_id in self.superseded_checkpoint_ids:
             raise InvalidTransitionError("checkpoint id was already superseded")
         if self.active_checkpoint_id is not None:
@@ -367,6 +426,7 @@ class RunState:
             active_checkpoint_id=None,
             active_checkpoint_expires_at=None,
             checkpoint_return_status=None,
+            expired_checkpoint_ids=self.expired_checkpoint_ids + (self.active_checkpoint_id,),
         )
 
     def _record_decision(self, event: RunEvent) -> "RunState":
@@ -427,6 +487,13 @@ class RunState:
             "active_plan_revision": self.active_plan_revision,
             "active_plan_artifact_id": self.active_plan_artifact_id,
             "active_plan_artifact_digest": self.active_plan_artifact_digest,
+            "active_feedback_id": self.active_feedback_id,
+            "active_generation_id": self.active_generation_id,
+            "generation_in_progress": self.generation_in_progress,
+            "completed_generation_id": self.completed_generation_id,
+            "completed_generation_artifact_id": self.completed_generation_artifact_id,
+            "completed_generation_artifact_digest": self.completed_generation_artifact_digest,
+            "expired_checkpoint_ids": list(self.expired_checkpoint_ids),
         }
         document.update({key: value for key, value in optional.items() if value is not None})
         return document
@@ -454,7 +521,7 @@ class RunState:
         if not isinstance(updated_at, str):
             raise ValueError("updated_at must be a timestamp string")
         _parse_timestamp(updated_at)
-        for field_name in ("superseded_checkpoint_ids", "processed_event_ids"):
+        for field_name in ("superseded_checkpoint_ids", "expired_checkpoint_ids", "processed_event_ids"):
             values = document.get(field_name, [])
             if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
                 raise ValueError(f"{field_name} must be an array of strings")
@@ -465,7 +532,7 @@ class RunState:
             isinstance(key, str) and isinstance(value, str) for key, value in fingerprints.items()
         ):
             raise ValueError("event_fingerprints must be an object of strings")
-        for field_name in ("active_checkpoint_id", "active_checkpoint_expires_at", "checkpoint_return_status", "terminal_reason", "active_plan_id", "active_plan_artifact_id", "active_plan_artifact_digest"):
+        for field_name in ("active_checkpoint_id", "active_checkpoint_expires_at", "checkpoint_return_status", "terminal_reason", "active_plan_id", "active_plan_artifact_id", "active_plan_artifact_digest", "active_feedback_id", "active_generation_id", "completed_generation_id", "completed_generation_artifact_id", "completed_generation_artifact_digest"):
             value = document.get(field_name)
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"{field_name} must be a string when provided")
@@ -478,6 +545,10 @@ class RunState:
             raise ValueError("active_plan_revision must be a positive integer")
         if document.get("active_plan_artifact_digest") is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", document["active_plan_artifact_digest"]):
             raise ValueError("active_plan_artifact_digest must be a sha256 digest")
+        if document.get("completed_generation_artifact_digest") is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", document["completed_generation_artifact_digest"]):
+            raise ValueError("completed_generation_artifact_digest must be a sha256 digest")
+        if not isinstance(document.get("generation_in_progress", False), bool):
+            raise ValueError("generation_in_progress must be a boolean")
         for key in fingerprints:
             validate_identifier(key, "event_fingerprints key")
         if any(not re.fullmatch(r"[A-Fa-f0-9]{64}", value) for value in fingerprints.values()):
@@ -500,7 +571,14 @@ class RunState:
             active_plan_revision=document.get("active_plan_revision"),
             active_plan_artifact_id=document.get("active_plan_artifact_id") or None,
             active_plan_artifact_digest=document.get("active_plan_artifact_digest") or None,
+            active_feedback_id=document.get("active_feedback_id") or None,
+            active_generation_id=document.get("active_generation_id") or None,
+            generation_in_progress=document.get("generation_in_progress", False),
+            completed_generation_id=document.get("completed_generation_id") or None,
+            completed_generation_artifact_id=document.get("completed_generation_artifact_id") or None,
+            completed_generation_artifact_digest=document.get("completed_generation_artifact_digest") or None,
             admission_blocked=admission_blocked,
+            expired_checkpoint_ids=tuple(document.get("expired_checkpoint_ids", [])),
         )
 
     def _replace(self, event: RunEvent, **changes: object) -> "RunState":
@@ -519,9 +597,16 @@ class RunState:
             active_plan_revision=changes.get("active_plan_revision", self.active_plan_revision),
             active_plan_artifact_id=changes.get("active_plan_artifact_id", self.active_plan_artifact_id),
             active_plan_artifact_digest=changes.get("active_plan_artifact_digest", self.active_plan_artifact_digest),
+            active_feedback_id=changes.get("active_feedback_id", self.active_feedback_id),
+            active_generation_id=changes.get("active_generation_id", self.active_generation_id),
+            generation_in_progress=changes.get("generation_in_progress", self.generation_in_progress),
+            completed_generation_id=changes.get("completed_generation_id", self.completed_generation_id),
+            completed_generation_artifact_id=changes.get("completed_generation_artifact_id", self.completed_generation_artifact_id),
+            completed_generation_artifact_digest=changes.get("completed_generation_artifact_digest", self.completed_generation_artifact_digest),
             superseded_checkpoint_ids=changes.get(
                 "superseded_checkpoint_ids", self.superseded_checkpoint_ids
             ),
+            expired_checkpoint_ids=changes.get("expired_checkpoint_ids", self.expired_checkpoint_ids),
             processed_event_ids=self.processed_event_ids + (event.event_id,),
             terminal_reason=changes.get("terminal_reason", self.terminal_reason),
             admission_blocked=self.admission_blocked or event.event_type == "admission_blocked",

@@ -27,7 +27,10 @@
     ,"plan_revision": { "type": "integer", "minimum": 1 }
     ,"plan_artifact_id": { "$ref": "common.schema.json#/$defs/id" }
     ,"plan_artifact_digest": { "$ref": "common.schema.json#/$defs/digest" }
-    ,"feedback_id": { "$ref": "common.schema.json#/$defs/id" }
+     ,"feedback_id": { "$ref": "common.schema.json#/$defs/id" }
+     ,"generation_id": { "$ref": "common.schema.json#/$defs/id" }
+     ,"artifact_id": { "$ref": "common.schema.json#/$defs/id" }
+     ,"artifact_digest": { "$ref": "common.schema.json#/$defs/digest" }
   },
   "allOf": [
     {
@@ -64,18 +67,30 @@
           "properties": { "event_type": { "enum": ["analysis_blocked", "analysis_inconclusive"] } },
           "required": ["reason"]
         },
-        {
-          "properties": { "event_type": { "const": "plan_submitted" } },
-          "required": ["plan_id", "plan_revision", "plan_artifact_id", "plan_artifact_digest"]
-        },
+         {
+           "properties": { "event_type": { "const": "plan_submitted" } },
+           "required": ["plan_id", "plan_revision", "plan_artifact_id", "plan_artifact_digest"]
+         },
+         {
+           "properties": { "event_type": { "const": "generation_started" } },
+           "required": ["generation_id"]
+         },
+         {
+           "properties": { "event_type": { "const": "generation_completed" } },
+           "required": ["generation_id", "artifact_id", "artifact_digest"]
+         },
         {
           "properties": {
             "event_type": {
-              "enum": ["admit", "analysis_started", "analysis_completed", "planning_completed", "generation_started", "generation_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap"]
+               "enum": ["admit", "analysis_started", "analysis_completed", "planning_completed", "execution_started", "execution_completed", "quality_passed", "quality_blocked", "quality_inconclusive", "quality_gap"]
             }
           }
         }
       ]
+    },
+    {
+      "if": { "properties": { "event_type": { "const": "return_to_plan" } } },
+      "then": { "required": ["feedback_id"] }
     }
   ]
 }

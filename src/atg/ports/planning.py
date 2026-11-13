@@ -22,6 +22,12 @@ class PlanningStore(Protocol):
     def get_plan(self, plan_id: str) -> "PlanRecord | None":
         """Return a persisted plan bundle by stable identity."""
 
+    def get_checkpoint(self, checkpoint_id: str):
+        """Return the durable checkpoint projection by identity."""
+
+    def get_feedback(self, feedback_id: str):
+        """Return persisted feedback by identity."""
+
     def record_plan(
         self,
         record: "PlanRecord",

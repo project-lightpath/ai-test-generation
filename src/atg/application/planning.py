@@ -103,6 +103,9 @@ class PlanningService:
                 raise PlanningConflictError("plan analysis does not belong to the run")
             if analysis.checkpoint is None:
                 raise PlanningConflictError("plan requires a reviewable analysis")
+            checkpoint = self._store.get_checkpoint(analysis.checkpoint["checkpoint_id"])
+            if checkpoint is None or checkpoint.get("state") != "approved" or checkpoint.get("decision", {}).get("value") != "approved":
+                raise PlanningConflictError("plan requires an approved analysis checkpoint")
             analysis_artifact_id = f"artifact-{analysis.manifest['analysis_id']}"
             reviewed = analysis.checkpoint.get("reviewed_artifact", {})
             source_artifact = next((item["artifact"] for item in analysis.artifacts if item["artifact"].get("artifact_id") == analysis_artifact_id), None)
@@ -136,24 +139,44 @@ class PlanningService:
 
     def revise_with_feedback(self, feedback: FeedbackRequest) -> PlanRecord:
         """Create and persist a superseding plan revision from feedback."""
+        existing_feedback = self._store.get_feedback(feedback.feedback_id)
+        if existing_feedback is not None:
+            expected_feedback = feedback.to_document()
+            existing_identity = dict(existing_feedback)
+            existing_identity["resolution"] = expected_feedback["resolution"]
+            if existing_identity != expected_feedback:
+                raise FeedbackConflictError("feedback identity is bound to different inputs")
+            replay = self._store.get_plan(f"{feedback.plan_id}-r{feedback.plan_revision + 1}")
+            if replay is not None:
+                return PlanRecord(replay.request_digest, replay.manifest, replay.checkpoint, replay.provenance, replay.artifacts, True)
+            raise FeedbackConflictError("feedback was persisted without its revision")
         old = self._store.get_plan(feedback.plan_id)
         if old is None or old.manifest.get("plan_revision") != feedback.plan_revision:
             raise FeedbackConflictError("feedback plan revision does not exist")
         if old.manifest.get("status") != "approved":
             raise FeedbackConflictError("feedback requires an approved plan")
-        approved_artifact = next(artifact["artifact"] for artifact in old.artifacts if artifact["artifact"].get("artifact_id") == f"artifact-{feedback.plan_id}")
+        if old.manifest.get("run_id") != feedback.run_id:
+            raise FeedbackConflictError("feedback run does not match the plan")
+        if old.checkpoint.get("checkpoint_id") != feedback.checkpoint_id:
+            raise FeedbackConflictError("feedback checkpoint does not match the plan")
+        checkpoint = self._store.get_checkpoint(feedback.checkpoint_id)
+        if checkpoint is None or checkpoint.get("state") != "approved":
+            raise FeedbackConflictError("feedback requires an approved plan checkpoint")
+        approved_artifact = next((artifact["artifact"] for artifact in old.artifacts if artifact["artifact"].get("artifact_id") == f"artifact-{feedback.plan_id}"), None)
+        if approved_artifact is None:
+            raise FeedbackConflictError("approved plan artifact is missing")
         if approved_artifact.get("digest") != feedback.plan_artifact_digest:
             raise FeedbackConflictError("feedback plan digest does not match the approved plan")
         new_id = f"{feedback.plan_id}-r{feedback.plan_revision + 1}"
         manifest = dict(old.manifest)
+        manifest.pop("approved_by", None)
         manifest.update({"plan_id": new_id, "plan_revision": feedback.plan_revision + 1, "status": "draft", "supersedes": feedback.plan_id, "feedback_refs": [feedback.feedback_id], "created_at": feedback.created_at})
         artifact = _artifact(f"artifact-{new_id}", "application/vnd.atg.plan+json", manifest)
         manifest["artifact_refs"] = [artifact["artifact"]["artifact_id"]]
         artifact = _artifact(f"artifact-{new_id}", "application/vnd.atg.plan+json", manifest)
         provenance = dict(old.provenance)
         provenance.update({"provenance_id": f"provenance-{new_id}", "recorded_at": feedback.created_at, "artifacts": [artifact["artifact"]]})
-        checkpoint = dict(old.checkpoint)
-        checkpoint.update({"checkpoint_id": f"checkpoint-{new_id}", "revision": feedback.plan_revision + 1, "state": "pending", "created_at": feedback.created_at, "reviewed_artifact": artifact["artifact"]})
+        checkpoint = {"contract": "atg.checkpoint", "version": "1.0", "checkpoint_id": f"checkpoint-{new_id}", "run_id": feedback.run_id, "kind": "plan_review", "revision": feedback.plan_revision + 1, "state": "pending", "created_at": feedback.created_at, "supersedes": feedback.checkpoint_id, "reviewed_artifact": artifact["artifact"]}
         record = PlanRecord(feedback.digest(), manifest, checkpoint, provenance, (artifact,))
         validate_plan_record(record)
         state = self._store.get_run(feedback.run_id)

@@ -43,6 +43,9 @@ def planning_state(run_id="run-1"):
 class RunStateTests(unittest.TestCase):
     def test_plan_submission_binds_active_plan_artifact(self):
         state = planning_state()
+        state = RunState(
+            **{**state.__dict__, "active_plan_revision": 0}
+        )
         state = state.apply(event("run-1", "e1", 1, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64)).state
         self.assertEqual(state.status, "planning")
         self.assertEqual(state.active_plan_id, "plan-1")
@@ -94,8 +97,8 @@ class RunStateTests(unittest.TestCase):
             )
         ).state
         self.assertEqual(state.status, "coding")
-        state = state.apply(event("run-1", "e10", 9, "generation_started")).state
-        state = state.apply(event("run-1", "e11", 10, "generation_completed")).state
+        state = state.apply(event("run-1", "e10", 9, "generation_started", generation_id="generation-1")).state
+        state = state.apply(event("run-1", "e11", 10, "generation_completed", generation_id="generation-1", artifact_id="artifact-generated-1", artifact_digest="sha256:" + "b" * 64)).state
         state = state.apply(
             event(
                 "run-1",
@@ -153,6 +156,29 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(state.revision, 19)
         self.assertIsNone(state.active_checkpoint_id)
         self.assertEqual(len(state.processed_event_ids), 19)
+
+    def test_analysis_review_cannot_return_directly_to_plan(self):
+        state = RunState(
+            run_id="run-1", status="analysis_review", revision=0,
+            updated_at="2026-11-03T17:00:00Z", active_checkpoint_id="cp-analysis",
+        )
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e1", 0, "return_to_plan", reason="feedback", feedback_id="feedback-1"))
+
+    def test_generation_completion_requires_started_generation_and_identity(self):
+        state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z")
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e1", 0, "generation_completed", generation_id="generation-1", artifact_id="artifact-1", artifact_digest="sha256:" + "b" * 64))
+        state = state.apply(event("run-1", "e1", 0, "generation_started", generation_id="generation-1")).state
+        state = state.apply(event("run-1", "e2", 1, "generation_completed", generation_id="generation-1", artifact_id="artifact-1", artifact_digest="sha256:" + "b" * 64)).state
+        self.assertEqual(state.completed_generation_id, "generation-1")
+
+    def test_code_review_requires_completed_generation_identity(self):
+        state = planning_state()
+        state = state.apply(event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")).state
+        state = state.apply(event("run-1", "e3", 2, "decision_recorded", checkpoint_id="cp-plan", decision="approved", decision_id="d1", actor_id="r1", actor_role="owner", authorization_ref="a1")).state
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e4", 3, "checkpoint_created", checkpoint_id="cp-code", checkpoint_kind="code_review"))
 
     def test_exact_retry_is_idempotent(self):
         state = RunState.initial("run-1")
@@ -259,6 +285,7 @@ class RunStateTests(unittest.TestCase):
         ).state
         self.assertEqual(state.status, "planning")
         self.assertIsNone(state.active_checkpoint_id)
+        self.assertEqual(state.expired_checkpoint_ids, ("cp-1",))
 
         naive = planning_state("run-2")
         naive = naive.apply(
@@ -440,6 +467,8 @@ class RunStateTests(unittest.TestCase):
                 self.assertEqual(result.state.status, expected_status)
                 self.assertIsNone(result.state.active_checkpoint_id)
                 self.assertIsNone(result.state.checkpoint_return_status)
+                if event_type == "return_to_plan":
+                    self.assertEqual(result.state.active_feedback_id, "feedback-1")
 
 
 if __name__ == "__main__":

@@ -23,7 +23,10 @@ def graph_documents():
         "contract": "atg.analysis", "version": "1.0", "analysis_id": "analysis-1", "run_id": "run-1",
         "request_id": "request-1", "revision": 1, "analyzed_at": "2026-11-03T17:00:00Z",
         "subject": {"kind": "git-repository", "id": "repo-1", "version": "abc123"},
-        "outcome": "stated_gap", "evidence_refs": [], "objective_refs": [], "objective_candidates": [],
+         "outcome": "stated_gap", "evidence_refs": [], "objective_refs": ["objective-1"], "objective_candidates": [{
+             "candidate_id": "candidate-1", "objective_ref": "objective-1", "disposition": "candidate",
+             "evidence_refs": [],
+         }],
         "provenance_ref": "provenance-1", "artifact_refs": ["artifact-analysis-1"],
         "findings": [], "assumptions": [], "gaps": ["No analysis evidence in this integrity fixture."],
     }
@@ -33,7 +36,8 @@ def graph_documents():
         "analysis_revision": 1, "subject": {"kind": "git-repository", "id": "repo-1", "version": "abc123"}, "plan_revision": 1,
         "objective_refs": ["objective-1"], "steps": [{"step_id": "step-1", "stage": "execute", "action": "run tests"}],
         "status": "approved", "created_at": "2026-11-03T17:00:00Z", "provenance_ref": "provenance-1", "artifact_refs": ["artifact-plan-1"],
-        "coverage_matrix": [{"objective_ref": "objective-1", "disposition": "planned"}],
+         "coverage_matrix": [{"objective_ref": "objective-1", "disposition": "planned"}],
+         "feasibility": [{"objective_ref": "objective-1", "strategy": "static", "status": "available"}],
     }
     generation = {
         "contract": "atg.generation", "version": "1.0", "generation_id": "generation-1",
@@ -70,7 +74,8 @@ def graph_documents():
     checkpoint = {
         "contract": "atg.checkpoint", "version": "1.0", "checkpoint_id": "checkpoint-plan-1", "run_id": "run-1",
         "kind": "plan_review", "revision": 1, "state": "approved", "created_at": "2026-11-03T17:00:00Z",
-        "reviewed_artifact": {"artifact_id": "artifact-plan-1", "media_type": "application/vnd.atg.plan+json", "digest": "sha256:" + "b" * 64},
+         "reviewed_artifact": {"artifact_id": "artifact-plan-1", "media_type": "application/vnd.atg.plan+json", "digest": "sha256:" + "b" * 64},
+         "decision": {"decision_id": "decision-plan-1", "value": "approved"},
     }
     request = {
         "contract": "atg.request", "version": "1.0", "request_id": "request-1", "run_id": "run-1",
@@ -169,6 +174,50 @@ class ContractIntegrityTests(unittest.TestCase):
         with self.assertRaises(ContractIntegrityError) as raised:
             validate_documents(documents)
         self.assertIn("generation requires the approved plan artifact digest", raised.exception.errors)
+
+    def test_generation_resolves_exact_plan_checkpoint_and_decision(self):
+        documents = graph_documents()
+        generation = next(document for document in documents if document.get("generation_id") == "generation-1")
+        generation["plan_checkpoint_id"] = "checkpoint-other"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("generation.plan_checkpoint_id references missing atg.checkpoint/checkpoint-other", raised.exception.errors)
+
+        documents = graph_documents()
+        generation = next(document for document in documents if document.get("generation_id") == "generation-1")
+        checkpoint = next(document for document in documents if document.get("checkpoint_id") == "checkpoint-plan-1")
+        checkpoint["decision"]["decision_id"] = "decision-other"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("generation plan_decision_id does not match checkpoint decision", raised.exception.errors)
+
+    def test_plan_binds_analysis_revision_artifact_and_exhaustive_rows(self):
+        documents = graph_documents()
+        plan = next(document for document in documents if document.get("plan_id") == "plan-1")
+        plan["analysis_revision"] = 2
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("plan analysis revision differs from analysis", raised.exception.errors)
+
+        documents = graph_documents()
+        plan = next(document for document in documents if document.get("plan_id") == "plan-1")
+        plan["feasibility"] = []
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("plan.feasibility must cover every plan objective exactly once", raised.exception.errors)
+
+    def test_feedback_plan_identity_matches_checkpoint(self):
+        documents = graph_documents()
+        feedback = {
+            "contract": "atg.feedback", "feedback_id": "feedback-1", "run_id": "run-1",
+            "checkpoint_id": "checkpoint-plan-1", "plan_id": "plan-1", "plan_revision": 1,
+        }
+        documents.append(feedback)
+        validate_documents(documents)
+        feedback["plan_id"] = "plan-other"
+        with self.assertRaises(ContractIntegrityError) as raised:
+            validate_documents(documents)
+        self.assertIn("feedback.plan_id references missing atg.plan/plan-other", raised.exception.errors)
 
     def test_complete_evidence_graph_is_consistent(self):
         validate_documents(graph_documents())
