@@ -26,7 +26,36 @@ def event(run_id, event_id, revision, event_type, **kwargs):
     )
 
 
+def planning_state(run_id="run-1"):
+    """Return a planning-stage projection for checkpoint-focused unit tests."""
+    return RunState(
+        run_id=run_id,
+        status="planning",
+        revision=1,
+        updated_at="2026-11-03T17:00:01Z",
+        active_plan_id="plan-fixture",
+        active_plan_revision=1,
+        active_plan_artifact_id="artifact-plan-fixture",
+        active_plan_artifact_digest="sha256:" + "a" * 64,
+    )
+
+
 class RunStateTests(unittest.TestCase):
+    def test_plan_submission_binds_active_plan_artifact(self):
+        state = planning_state()
+        state = RunState(
+            **{**state.__dict__, "active_plan_revision": 0}
+        )
+        state = state.apply(event("run-1", "e1", 1, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64)).state
+        self.assertEqual(state.status, "planning")
+        self.assertEqual(state.active_plan_id, "plan-1")
+        self.assertEqual(state.active_plan_revision, 1)
+
+    def test_plan_submission_requires_planning_state(self):
+        state = RunState.initial("run-1").apply(event("run-1", "e1", 0, "admit")).state
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e2", 1, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64))
+
     def test_analysis_gate_outcomes_are_terminal_and_reasoned(self):
         for event_type, expected_status in (("analysis_blocked", "blocked"), ("analysis_inconclusive", "inconclusive")):
             with self.subTest(event_type=event_type):
@@ -55,25 +84,26 @@ class RunStateTests(unittest.TestCase):
         ).state
         self.assertEqual(state.status, "planning")
         state = state.apply(event("run-1", "e6", 5, "planning_completed")).state
+        state = state.apply(event("run-1", "e7", 6, "plan_submitted", plan_id="plan-1", plan_revision=1, plan_artifact_id="artifact-plan-1", plan_artifact_digest="sha256:" + "a" * 64)).state
         state = state.apply(
-            event("run-1", "e7", 6, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
+            event("run-1", "e8", 7, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
         ).state
         self.assertEqual(state.status, "plan_review")
         state = state.apply(
             event(
-                "run-1", "e8", 7, "decision_recorded", checkpoint_id="cp-plan", decision="approved",
+                "run-1", "e9", 8, "decision_recorded", checkpoint_id="cp-plan", decision="approved",
                 decision_id="decision-plan", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
         ).state
         self.assertEqual(state.status, "coding")
-        state = state.apply(event("run-1", "e9", 8, "generation_started")).state
-        state = state.apply(event("run-1", "e10", 9, "generation_completed")).state
+        state = state.apply(event("run-1", "e10", 9, "generation_started", generation_id="generation-1")).state
+        state = state.apply(event("run-1", "e11", 10, "generation_completed", generation_id="generation-1", artifact_id="artifact-generated-1", artifact_digest="sha256:" + "b" * 64)).state
         state = state.apply(
             event(
                 "run-1",
-                "e11",
-                10,
+                "e12",
+                11,
                 "checkpoint_created",
                 checkpoint_id="cp-code",
                 checkpoint_kind="code_review",
@@ -82,19 +112,19 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(state.status, "code_review")
         state = state.apply(
             event(
-                "run-1", "e12", 11, "decision_recorded", checkpoint_id="cp-code", decision="approved",
+                "run-1", "e13", 12, "decision_recorded", checkpoint_id="cp-code", decision="approved",
                 decision_id="decision-code", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
         ).state
         self.assertEqual(state.status, "executing")
-        state = state.apply(event("run-1", "e13", 12, "execution_started")).state
-        state = state.apply(event("run-1", "e14", 13, "execution_completed")).state
+        state = state.apply(event("run-1", "e14", 13, "execution_started")).state
+        state = state.apply(event("run-1", "e15", 14, "execution_completed")).state
         state = state.apply(
             event(
                 "run-1",
-                "e15",
-                14,
+                "e16",
+                15,
                 "checkpoint_created",
                 checkpoint_id="cp-exec",
                 checkpoint_kind="execution_review",
@@ -103,7 +133,7 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(state.status, "execution_review")
         state = state.apply(
             event(
-                "run-1", "e16", 15, "decision_recorded", checkpoint_id="cp-exec", decision="approved",
+                "run-1", "e17", 16, "decision_recorded", checkpoint_id="cp-exec", decision="approved",
                 decision_id="decision-exec", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
@@ -111,21 +141,44 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(state.status, "quality_review")
         state = state.apply(
             event(
-                "run-1", "e17", 16, "checkpoint_created", checkpoint_id="cp-quality", checkpoint_kind="quality_review"
+                "run-1", "e18", 17, "checkpoint_created", checkpoint_id="cp-quality", checkpoint_kind="quality_review"
             )
         ).state
         self.assertEqual(state.status, "quality_review")
         state = state.apply(
             event(
-                "run-1", "e18", 17, "decision_recorded", checkpoint_id="cp-quality", decision="approved",
+                "run-1", "e19", 18, "decision_recorded", checkpoint_id="cp-quality", decision="approved",
                 decision_id="decision-quality", actor_id="reviewer-1", actor_role="owner",
                 authorization_ref="approval-policy-1",
             )
         ).state
         self.assertEqual(state.status, "completed")
-        self.assertEqual(state.revision, 18)
+        self.assertEqual(state.revision, 19)
         self.assertIsNone(state.active_checkpoint_id)
-        self.assertEqual(len(state.processed_event_ids), 18)
+        self.assertEqual(len(state.processed_event_ids), 19)
+
+    def test_analysis_review_cannot_return_directly_to_plan(self):
+        state = RunState(
+            run_id="run-1", status="analysis_review", revision=0,
+            updated_at="2026-11-03T17:00:00Z", active_checkpoint_id="cp-analysis",
+        )
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e1", 0, "return_to_plan", reason="feedback", feedback_id="feedback-1"))
+
+    def test_generation_completion_requires_started_generation_and_identity(self):
+        state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z")
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e1", 0, "generation_completed", generation_id="generation-1", artifact_id="artifact-1", artifact_digest="sha256:" + "b" * 64))
+        state = state.apply(event("run-1", "e1", 0, "generation_started", generation_id="generation-1")).state
+        state = state.apply(event("run-1", "e2", 1, "generation_completed", generation_id="generation-1", artifact_id="artifact-1", artifact_digest="sha256:" + "b" * 64)).state
+        self.assertEqual(state.completed_generation_id, "generation-1")
+
+    def test_code_review_requires_completed_generation_identity(self):
+        state = planning_state()
+        state = state.apply(event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")).state
+        state = state.apply(event("run-1", "e3", 2, "decision_recorded", checkpoint_id="cp-plan", decision="approved", decision_id="d1", actor_id="r1", actor_role="owner", authorization_ref="a1")).state
+        with self.assertRaises(InvalidTransitionError):
+            state.apply(event("run-1", "e4", 3, "checkpoint_created", checkpoint_id="cp-code", checkpoint_kind="code_review"))
 
     def test_exact_retry_is_idempotent(self):
         state = RunState.initial("run-1")
@@ -136,14 +189,12 @@ class RunStateTests(unittest.TestCase):
         self.assertEqual(retry.state, state)
 
     def test_reusing_event_id_with_new_payload_is_rejected(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = RunState.initial("run-1").apply(event("run-1", "e1", 0, "admit")).state
         with self.assertRaises(DuplicateEventError):
             state.apply(event("run-1", "e1", 1, "analysis_started"))
 
     def test_stale_revision_is_rejected(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = RunState.initial("run-1").apply(event("run-1", "e1", 0, "admit")).state
         with self.assertRaises(StaleEventError):
             state.apply(event("run-1", "e2", 0, "analysis_started"))
 
@@ -158,8 +209,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_checkpoint_replacement_requires_explicit_supersession(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -190,8 +240,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_rejected_review_is_terminal_and_cannot_emit_evidence_flow(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -215,8 +264,7 @@ class RunStateTests(unittest.TestCase):
             state.apply(event("run-1", "e4", 3, "analysis_started"))
 
     def test_checkpoint_expiry_returns_to_resumable_stage(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event(
                 "run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1",
@@ -235,11 +283,11 @@ class RunStateTests(unittest.TestCase):
                 occurred_at="2026-11-03T17:10:00.5Z",
             )
         ).state
-        self.assertEqual(state.status, "admitted")
+        self.assertEqual(state.status, "planning")
         self.assertIsNone(state.active_checkpoint_id)
+        self.assertEqual(state.expired_checkpoint_ids, ("cp-1",))
 
-        naive = RunState.initial("run-2")
-        naive = naive.apply(event("run-2", "e1", 0, "admit")).state
+        naive = planning_state("run-2")
         naive = naive.apply(
             event(
                 "run-2", "e2", 1, "checkpoint_created", checkpoint_id="cp-2",
@@ -255,8 +303,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_blocked_run_can_be_explicitly_retried(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -285,8 +332,7 @@ class RunStateTests(unittest.TestCase):
             state.apply(event("run-1", "e2", 1, "retry_requested", reason="retry admission"))
 
     def test_rejected_decision_becomes_terminal_blocked_outcome(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-1", checkpoint_kind="plan_review")
         ).state
@@ -308,8 +354,7 @@ class RunStateTests(unittest.TestCase):
             state.apply(event("run-1", "e2", 0, "unknown_event"))
 
     def test_checkpoint_replacement_cannot_change_review_kind(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
         ).state
@@ -322,8 +367,7 @@ class RunStateTests(unittest.TestCase):
             )
 
     def test_review_decision_requires_authorization_metadata(self):
-        state = RunState.initial("run-1")
-        state = state.apply(event("run-1", "e1", 0, "admit")).state
+        state = planning_state()
         state = state.apply(
             event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")
         ).state
@@ -419,10 +463,12 @@ class RunStateTests(unittest.TestCase):
                     active_checkpoint_expires_at="2026-11-04T17:00:00Z",
                     checkpoint_return_status="planning",
                 )
-                result = state.apply(event("run-1", "e1", 0, event_type, reason="review feedback"))
+                result = state.apply(event("run-1", "e1", 0, event_type, reason="review feedback", feedback_id="feedback-1" if event_type == "return_to_plan" else None))
                 self.assertEqual(result.state.status, expected_status)
                 self.assertIsNone(result.state.active_checkpoint_id)
                 self.assertIsNone(result.state.checkpoint_return_status)
+                if event_type == "return_to_plan":
+                    self.assertEqual(result.state.active_feedback_id, "feedback-1")
 
 
 if __name__ == "__main__":

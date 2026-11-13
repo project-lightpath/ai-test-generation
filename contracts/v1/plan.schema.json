@@ -4,12 +4,19 @@
   "title": "ATG test plan",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "plan_id", "run_id", "objective_refs", "steps", "status", "created_at"],
+  "required": ["contract", "version", "plan_id", "run_id", "analysis_id", "analysis_artifact", "analysis_revision", "subject", "plan_revision", "objective_refs", "steps", "status", "created_at", "provenance_ref", "artifact_refs", "coverage_matrix"],
   "properties": {
     "contract": { "const": "atg.plan" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
     "plan_id": { "$ref": "common.schema.json#/$defs/id" },
     "run_id": { "$ref": "common.schema.json#/$defs/id" },
+    "analysis_id": { "$ref": "common.schema.json#/$defs/id" },
+    "analysis_artifact": { "$ref": "common.schema.json#/$defs/artifact" },
+    "analysis_revision": { "type": "integer", "minimum": 1 },
+    "subject": { "$ref": "common.schema.json#/$defs/identity" },
+    "plan_revision": { "type": "integer", "minimum": 1 },
+    "supersedes": { "$ref": "common.schema.json#/$defs/id" },
+    "feedback_refs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
     "objective_refs": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
     "steps": {
       "type": "array",
@@ -36,11 +43,14 @@
     },
     "status": { "enum": ["draft", "approved", "rejected", "superseded"] },
     "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "provenance_ref": { "$ref": "common.schema.json#/$defs/id" },
+    "artifact_refs": { "type": "array", "minItems": 1, "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true },
     "approved_by": { "$ref": "common.schema.json#/$defs/id" },
     "assumptions": { "type": "array", "items": { "type": "string" } },
     "gaps": { "type": "array", "items": { "type": "string" } }
     ,"coverage_matrix": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -48,9 +58,29 @@
         "properties": {
           "objective_ref": { "$ref": "common.schema.json#/$defs/id" },
           "disposition": { "enum": ["planned", "excluded", "stated_gap", "not_evaluable"] },
-          "reason": { "type": "string" }
-        }
+          "reason": { "type": "string", "minLength": 1 }
+        },
+        "allOf": [{
+          "if": { "properties": { "disposition": { "enum": ["excluded", "stated_gap", "not_evaluable"] } } },
+          "then": { "required": ["reason"] }
+        }]
       }
+    },
+    "feasibility": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["objective_ref", "strategy", "status"],
+        "properties": {
+          "objective_ref": { "$ref": "common.schema.json#/$defs/id" },
+          "strategy": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["available", "infeasible", "not_evaluable", "inconclusive"] },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      },
+      "uniqueItems": true
     }
   }
 }

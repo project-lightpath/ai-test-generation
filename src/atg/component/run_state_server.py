@@ -19,6 +19,8 @@ from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.admission import AdmissionConflictError, AdmissionRequest, AdmissionService, CheckResult
 from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService
+from atg.application.planning import PlanningConflictError, PlanningRequest, PlanningService
+from atg.application.feedback import FeedbackConflictError, FeedbackRequest
 from atg.application.readiness import PlatformReadinessService
 from atg.domain.repository_analysis import RepositorySubject
 from atg.domain.schema_validation import ContractValidationError, contract_asset_path
@@ -40,9 +42,15 @@ ANALYSIS_FIELDS = frozenset({
     "analysis_id", "request_id", "run_id", "repository", "expected_revision", "occurred_at",
     "objective_refs", "requested_capabilities", "supplied_evidence", "supplied_objectives",
 })
+PLAN_FIELDS = frozenset({"plan_id", "analysis_id", "run_id", "expected_revision", "occurred_at"})
+FEEDBACK_FIELDS = frozenset({"feedback_id", "run_id", "plan_revision", "plan_artifact_digest", "checkpoint_id", "created_at", "message", "category", "severity", "actor_id"})
+DECISION_FIELDS = frozenset({"run_id", "expected_revision", "occurred_at", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref", "reason"})
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
 DIGEST_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$")
+SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+FEEDBACK_CATEGORIES = frozenset({"scope_change", "requirement_clarification", "expected_behavior", "excluded_case", "fixture_preference", "safety_constraint", "classification_override", "assertion_correction", "infrastructure", "other"})
+FEEDBACK_SEVERITIES = frozenset({"info", "warning", "error"})
 
 
 class BadRequestError(ValueError):
@@ -118,6 +126,7 @@ def create_server(
     admission_service = AdmissionService(store, (CapabilityCheck(), IdentityCheck()), readiness=readiness_service)
     repository_roots = dict(repository_roots or {})
     analysis_service = AnalysisService(store, LocalRepositoryContextAdapter(), tuple(analyzers))
+    planning_service = PlanningService(store)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
@@ -136,6 +145,21 @@ def create_server(
                         self._respond(404, {"error": "analysis not found"})
                     else:
                         self._respond(200, _analysis_document(record))
+                elif len(parts) == 2 and parts[0] == "plans":
+                    record = store.get_plan(parts[1])
+                    if record is None:
+                        self._respond(404, {"error": "plan not found"})
+                    else:
+                        self._respond(200, _plan_document(record))
+                elif len(parts) == 2 and parts[0] == "checkpoints":
+                    checkpoint = store.get_checkpoint(parts[1])
+                    if checkpoint is None:
+                        self._respond(404, {"error": "checkpoint not found"})
+                    else:
+                        self._respond(200, checkpoint)
+                elif len(parts) == 2 and parts[0] == "feedback":
+                    feedback = store.get_feedback(parts[1])
+                    self._respond(200, feedback) if feedback is not None else self._respond(404, {"error": "feedback not found"})
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
                 elif parts == ["readiness"]:
@@ -315,6 +339,124 @@ def create_server(
                     result = analysis_service.analyze(request)
                     self._respond(200 if result.duplicate else 201, _analysis_document(result))
                     return
+                if parts == ["plans"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("plan body must be a JSON object")
+                    unknown = sorted(set(body) - PLAN_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported plan fields: {', '.join(unknown)}")
+                    for field in ("plan_id", "analysis_id", "run_id"):
+                        try:
+                            validate_identifier(body.get(field), field)
+                        except ValueError as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body.get("occurred_at"), "occurred_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body.get("expected_revision"), int) or isinstance(body.get("expected_revision"), bool) or body["expected_revision"] < 0:
+                        raise BadRequestError("expected_revision must be a non-negative integer")
+                    request = PlanningRequest(
+                        body["plan_id"], body["analysis_id"], body["run_id"], body["expected_revision"], body["occurred_at"]
+                    )
+                    result = planning_service.plan(request)
+                    self._respond(200 if result.duplicate else 201, _plan_document(result))
+                    return
+                if len(parts) == 3 and parts[0] == "plans" and parts[2] == "feedback":
+                    if not isinstance(body, dict):
+                        raise BadRequestError("feedback body must be a JSON object")
+                    unknown = sorted(set(body) - FEEDBACK_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported feedback fields: {', '.join(unknown)}")
+                    required = ("feedback_id", "run_id", "plan_revision", "plan_artifact_digest", "checkpoint_id", "created_at", "message")
+                    if any(field not in body for field in required):
+                        raise BadRequestError("feedback requires feedback identity, plan revision, checkpoint, timestamp, and message")
+                    for field in ("feedback_id", "run_id", "checkpoint_id"):
+                        try:
+                            validate_identifier(body[field], field)
+                        except (TypeError, ValueError) as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body["plan_revision"], int) or isinstance(body["plan_revision"], bool) or body["plan_revision"] < 1:
+                        raise BadRequestError("plan_revision must be a positive integer")
+                    if not isinstance(body["plan_artifact_digest"], str) or SHA256_PATTERN.fullmatch(body["plan_artifact_digest"]) is None:
+                        raise BadRequestError("plan_artifact_digest must be a sha256 digest")
+                    try:
+                        validate_timestamp(body["created_at"], "created_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body["message"], str) or not body["message"]:
+                        raise BadRequestError("feedback message is required")
+                    category = body.get("category", "other")
+                    severity = body.get("severity", "info")
+                    if not isinstance(category, str) or category not in FEEDBACK_CATEGORIES:
+                        raise BadRequestError(f"unsupported feedback category: {category}")
+                    if not isinstance(severity, str) or severity not in FEEDBACK_SEVERITIES:
+                        raise BadRequestError(f"unsupported feedback severity: {severity}")
+                    actor_id = body.get("actor_id", "reviewer")
+                    try:
+                        validate_identifier(actor_id, "actor_id")
+                    except (TypeError, ValueError) as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    try:
+                        request = FeedbackRequest(
+                            feedback_id=body["feedback_id"], run_id=body["run_id"], plan_id=parts[1],
+                            plan_revision=body["plan_revision"], plan_artifact_digest=body["plan_artifact_digest"],
+                            checkpoint_id=body["checkpoint_id"], created_at=body["created_at"], message=body["message"],
+                            category=category, severity=severity, actor_id=actor_id,
+                        )
+                    except (TypeError, ValueError) as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    result = planning_service.revise_with_feedback(request)
+                    self._respond(200 if result.duplicate else 201, _plan_document(result))
+                    return
+                if len(parts) == 3 and parts[0] == "checkpoints" and parts[2] == "decision":
+                    if not isinstance(body, dict):
+                        raise BadRequestError("decision body must be a JSON object")
+                    try:
+                        validate_identifier(parts[1], "checkpoint_id")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    unknown = sorted(set(body) - DECISION_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported decision fields: {', '.join(unknown)}")
+                    required = ("run_id", "expected_revision", "occurred_at", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref")
+                    if any(field not in body for field in required):
+                        raise BadRequestError("decision requires run, revision, timestamp, decision, reviewer, and authorization fields")
+                    for field in ("run_id", "decision_id", "actor_id", "authorization_ref"):
+                        try:
+                            validate_identifier(body[field], field)
+                        except (TypeError, ValueError) as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body["actor_role"], str) or not body["actor_role"]:
+                        raise BadRequestError("actor_role must be a non-empty string")
+                    if "reason" in body and not isinstance(body["reason"], str):
+                        raise BadRequestError("reason must be a string when provided")
+                    if not isinstance(body["expected_revision"], int) or isinstance(body["expected_revision"], bool) or body["expected_revision"] < 0:
+                        raise BadRequestError("expected_revision must be a non-negative integer")
+                    try:
+                        validate_timestamp(body["occurred_at"], "occurred_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    try:
+                        event = RunEvent(
+                            event_id=f"{body['decision_id']}-event",
+                            run_id=body["run_id"],
+                            event_type="decision_recorded",
+                            expected_revision=body["expected_revision"],
+                            occurred_at=body["occurred_at"],
+                            checkpoint_id=parts[1],
+                            decision=body["decision"],
+                            decision_id=body["decision_id"],
+                            actor_id=body["actor_id"],
+                            actor_role=body["actor_role"],
+                            authorization_ref=body["authorization_ref"],
+                            reason=body.get("reason"),
+                        )
+                    except (TypeError, ValueError) as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    result = store.apply(event)
+                    self._respond(200, {"duplicate": result.duplicate, "state": result.state.to_document()})
+                    return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
                         raise BadRequestError("request body must be a JSON object")
@@ -351,6 +493,10 @@ def create_server(
             except AdmissionConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except AnalysisConflictError as exc:
+                self._respond(409, {"error": str(exc)})
+            except PlanningConflictError as exc:
+                self._respond(409, {"error": str(exc)})
+            except FeedbackConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except AnalysisProcessingError:
                 self._respond(422, {"error": "analysis processing failed"})
@@ -413,6 +559,17 @@ def _analysis_document(record) -> dict:
         "checkpoint": dict(record.checkpoint) if record.checkpoint is not None else None,
         "evidence": [dict(document) for document in record.evidence],
         "objectives": [dict(document) for document in record.objectives],
+        "provenance": dict(record.provenance),
+        "artifacts": [dict(document["artifact"]) for document in record.artifacts],
+    }
+
+
+def _plan_document(record) -> dict:
+    """Serialize a normalized plan bundle without exposing internal raw state."""
+    return {
+        "duplicate": record.duplicate,
+        "manifest": dict(record.manifest),
+        "checkpoint": dict(record.checkpoint),
         "provenance": dict(record.provenance),
         "artifacts": [dict(document["artifact"]) for document in record.artifacts],
     }

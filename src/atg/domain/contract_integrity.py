@@ -76,8 +76,6 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 for artifact_id in document.get("artifact_refs", []):
                     if artifact_id not in provenance_artifacts:
                         errors.append(f"analysis.artifact_refs references missing provenance artifact {artifact_id}")
-                if set(document.get("artifact_refs", [])) != set(provenance_artifacts):
-                    errors.append("analysis artifact_refs must exactly match provenance artifacts")
             candidates = document.get("objective_candidates", [])
             candidate_ids = {candidate.get("candidate_id") for candidate in candidates}
             if len(candidate_ids) != len(candidates):
@@ -104,8 +102,45 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 errors.append("run_admission.request_id belongs to a different run")
         elif contract == "atg.plan":
             require_run(document, "plan.run_id")
+            analysis = _require_related(document, "atg.analysis", document.get("analysis_id"), require, errors, "plan.analysis_id")
+            if analysis is not None:
+                if analysis.get("run_id") != document.get("run_id"):
+                    errors.append("plan.analysis_id belongs to a different run")
+                if document.get("analysis_revision") != analysis.get("revision"):
+                    errors.append("plan analysis revision differs from analysis")
+                analysis_artifact = document.get("analysis_artifact", {})
+                if analysis_artifact.get("artifact_id") not in analysis.get("artifact_refs", []):
+                    errors.append("plan.analysis_artifact is not referenced by analysis")
+                provenance = index.get(("atg.provenance", analysis.get("provenance_ref")))
+                if provenance is not None and analysis_artifact not in provenance.get("artifacts", []):
+                    errors.append("plan.analysis_artifact metadata differs from analysis provenance")
+                if document.get("subject") != analysis.get("subject"):
+                    errors.append("plan subject differs from analysis subject")
+                analysis_objectives = set(analysis.get("objective_refs", []))
+                if set(document.get("objective_refs", [])) != analysis_objectives:
+                    errors.append("plan.objective_refs must exhaustively match analysis objectives")
+                candidates = analysis.get("objective_candidates", [])
+                candidate_objectives = {candidate.get("objective_ref") for candidate in candidates}
+                if candidate_objectives != analysis_objectives:
+                    errors.append("analysis candidates must exhaustively cover analysis objectives")
             for objective_id in document.get("objective_refs", []):
                 require("atg.objective", objective_id, "plan.objective_refs")
+            coverage = document.get("coverage_matrix", [])
+            coverage_ids = [row.get("objective_ref") for row in coverage]
+            if len(coverage_ids) != len(set(coverage_ids)):
+                errors.append("plan.coverage_matrix requires unique objective references")
+            if set(coverage_ids) != set(document.get("objective_refs", [])):
+                errors.append("plan.coverage_matrix must cover every plan objective exactly once")
+            feasibility = document.get("feasibility", [])
+            feasibility_ids = [row.get("objective_ref") for row in feasibility]
+            if len(feasibility_ids) != len(set(feasibility_ids)):
+                errors.append("plan.feasibility requires unique objective references")
+            if set(feasibility_ids) != set(document.get("objective_refs", [])):
+                errors.append("plan.feasibility must cover every plan objective exactly once")
+            step_ids = [step.get("step_id") for step in document.get("steps", [])]
+            if len(step_ids) != len(set(step_ids)):
+                errors.append("plan.steps requires unique step IDs")
+            _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "plan.provenance_ref")
         elif contract == "atg.objective":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "objective.evidence_refs")
         elif contract in {
@@ -125,7 +160,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
             require_run(document, f"{contract}.run_id")
 
         if contract == "atg.feedback" and document.get("checkpoint_id") is not None:
-            _require_related(
+            checkpoint = _require_related(
                 document,
                 "atg.checkpoint",
                 document["checkpoint_id"],
@@ -133,6 +168,16 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 errors,
                 "feedback.checkpoint_id",
             )
+            if checkpoint is not None and document.get("plan_id") is not None:
+                plan = _require_related(document, "atg.plan", document["plan_id"], require, errors, "feedback.plan_id")
+                reviewed = checkpoint.get("reviewed_artifact") or {}
+                if checkpoint.get("kind") != "plan_review" or reviewed.get("artifact_id") != f"artifact-{document['plan_id']}":
+                    errors.append("feedback checkpoint does not review the referenced plan")
+                if plan is not None:
+                    if document.get("plan_revision") is not None and document["plan_revision"] != plan.get("plan_revision"):
+                        errors.append("feedback plan revision differs from referenced plan")
+                    if document.get("plan_artifact_digest") is not None and document["plan_artifact_digest"] != reviewed.get("digest"):
+                        errors.append("feedback plan artifact digest differs from checkpoint")
         if contract == "atg.checkpoint" and document.get("kind") == "analysis_review":
             reviewed = document.get("reviewed_artifact") or {}
             analyses = [candidate for candidate in docs if candidate.get("contract") == "atg.analysis" and candidate.get("run_id") == document.get("run_id")]
@@ -147,6 +192,20 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 artifacts = provenance.get("artifacts", []) if provenance is not None else []
                 if reviewed not in artifacts:
                     errors.append("analysis_review checkpoint artifact metadata differs from provenance")
+        if contract == "atg.checkpoint" and document.get("kind") == "plan_review":
+            reviewed = document.get("reviewed_artifact") or {}
+            plans = [candidate for candidate in docs if candidate.get("contract") == "atg.plan" and candidate.get("run_id") == document.get("run_id")]
+            matching_plans = [plan for plan in plans if reviewed.get("artifact_id") in plan.get("artifact_refs", [])]
+            if not matching_plans:
+                errors.append("plan_review checkpoint artifact is not referenced by a plan manifest")
+            for plan in matching_plans:
+                expected_artifact_id = f"artifact-{plan.get('plan_id')}"
+                if reviewed.get("artifact_id") != expected_artifact_id or reviewed.get("media_type") != "application/vnd.atg.plan+json":
+                    errors.append("plan_review checkpoint must reference the plan manifest artifact")
+                provenance = index.get(("atg.provenance", plan.get("provenance_ref")))
+                artifacts = provenance.get("artifacts", []) if provenance is not None else []
+                if reviewed not in artifacts:
+                    errors.append("plan_review checkpoint artifact metadata differs from provenance")
         if contract == "atg.run_terminal":
             request = _require_related(
                 document, "atg.request", document.get("request_id"), require, errors,
@@ -168,7 +227,26 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
         if contract == "atg.feedback":
             _require_evidence_refs(document.get("evidence_refs", []), require, errors, "feedback.evidence_refs")
         if contract == "atg.generation":
-            _require_related(document, "atg.plan", document.get("plan_id"), require, errors, "generation.plan_id")
+            plan = _require_related(document, "atg.plan", document.get("plan_id"), require, errors, "generation.plan_id")
+            if plan is not None:
+                if plan.get("run_id") != document.get("run_id"):
+                    errors.append("generation.plan_id belongs to a different run")
+                if plan.get("status") != "approved":
+                    errors.append("generation requires an approved plan")
+                if document.get("plan_revision") != plan.get("plan_revision"):
+                    errors.append("generation plan revision differs from approved plan")
+                checkpoint = _require_related(document, "atg.checkpoint", document.get("plan_checkpoint_id"), require, errors, "generation.plan_checkpoint_id")
+                if checkpoint is not None:
+                    reviewed = checkpoint.get("reviewed_artifact") or {}
+                    if checkpoint.get("kind") != "plan_review" or checkpoint.get("state") != "approved":
+                        errors.append("generation requires an approved plan review checkpoint")
+                    if reviewed.get("artifact_id") != f"artifact-{plan.get('plan_id')}" or reviewed.get("digest") != document.get("plan_artifact_digest"):
+                        errors.append("generation requires the approved plan artifact digest")
+                    decision = checkpoint.get("decision") or {}
+                    if decision.get("decision_id") != document.get("plan_decision_id"):
+                        errors.append("generation plan_decision_id does not match checkpoint decision")
+                    if decision.get("value") != "approved":
+                        errors.append("generation requires an approved plan decision")
         if contract == "atg.execution":
             _require_related(
                 document,

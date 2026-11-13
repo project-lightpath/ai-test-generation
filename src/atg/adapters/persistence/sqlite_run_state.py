@@ -16,6 +16,8 @@ from typing import Iterator
 
 from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
 from atg.application.analysis import AnalysisConflictError, AnalysisRecord
+from atg.application.feedback import FeedbackConflictError
+from atg.application.planning import PlanRecord, PlanningConflictError, validate_plan_record
 from atg.domain.schema_validation import ContractValidationError
 from atg.domain.run_state import (
     DuplicateEventError,
@@ -71,8 +73,29 @@ class SQLiteRunStateStore:
                 bundle_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS analyses_by_run ON analyses(run_id);
+            CREATE TABLE IF NOT EXISTS plans (
+                plan_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                request_digest TEXT NOT NULL,
+                bundle_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS plans_by_run ON plans(run_id);
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                checkpoint_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                kind TEXT NOT NULL,
+                document_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS checkpoints_by_run ON checkpoints(run_id);
+            CREATE TABLE IF NOT EXISTS feedback (
+                feedback_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                request_digest TEXT NOT NULL,
+                document_json TEXT NOT NULL
+            );
             """
         )
+        self._backfill_checkpoint_projections()
         admission_columns = {
             row["name"] for row in self._connection.execute("PRAGMA table_info(admissions)")
         }
@@ -91,6 +114,25 @@ class SQLiteRunStateStore:
         """Close the SQLite connection."""
         with self._lock:
             self._connection.close()
+
+    def _backfill_checkpoint_projections(self) -> None:
+        """Rebuild missing analysis/plan checkpoint rows for pre-upgrade databases."""
+        rows = self._connection.execute(
+            "SELECT run_id, bundle_json FROM analyses UNION ALL SELECT run_id, bundle_json FROM plans"
+        ).fetchall()
+        for row in rows:
+            try:
+                bundle = json.loads(row["bundle_json"])
+                if not isinstance(bundle, dict):
+                    raise TypeError("stored bundle must be an object")
+                checkpoint = bundle.get("checkpoint")
+                if isinstance(checkpoint, dict) and checkpoint.get("checkpoint_id"):
+                    self._connection.execute(
+                        "INSERT OR IGNORE INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)",
+                        (checkpoint["checkpoint_id"], row["run_id"], checkpoint.get("kind", "unknown"), json.dumps(checkpoint, sort_keys=True)),
+                    )
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
 
     def get_admission(self, idempotency_key: str) -> AdmissionResult | None:
         """Load an admission result by transport idempotency key."""
@@ -144,6 +186,117 @@ class SQLiteRunStateStore:
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             raise ContractValidationError("persisted analysis bundle is corrupt") from exc
 
+    def get_plan(self, plan_id: str) -> PlanRecord | None:
+        """Load a durable plan bundle by stable identity."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT plan_id, run_id, request_digest, bundle_json FROM plans WHERE plan_id = ?", (plan_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            record = PlanRecord.from_storage_document(json.loads(row["bundle_json"]))
+            if row["plan_id"] != record.manifest.get("plan_id") or row["run_id"] != record.manifest.get("run_id") or row["request_digest"] != record.request_digest:
+                raise ContractValidationError("persisted plan row metadata differs from bundle")
+            return record
+        except ContractValidationError:
+            raise
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ContractValidationError("persisted plan bundle is corrupt") from exc
+
+    def record_plan(self, record: PlanRecord, submission_event: RunEvent, checkpoint_event: RunEvent) -> PlanRecord:
+        """Atomically persist a plan bundle and its submission/checkpoint events."""
+        validate_plan_record(record)
+        plan_id = str(record.manifest["plan_id"])
+        run_id = str(record.manifest["run_id"])
+        if submission_event.run_id != run_id or checkpoint_event.run_id != run_id:
+            raise ValueError("plan events must belong to the plan run")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute("SELECT request_digest, bundle_json FROM plans WHERE plan_id = ?", (plan_id,)).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != record.request_digest:
+                        raise PlanningConflictError("plan identity is bound to different inputs")
+                    self._connection.execute("COMMIT")
+                    return PlanRecord.from_storage_document(json.loads(existing["bundle_json"]), duplicate=True)
+                self._apply_locked(submission_event)
+                self._apply_locked(checkpoint_event)
+                self._connection.execute(
+                    "INSERT INTO plans(plan_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)",
+                    (plan_id, run_id, record.request_digest, json.dumps(record.to_storage_document(), sort_keys=True)),
+                )
+                self._connection.execute(
+                    "INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)",
+                    (record.checkpoint["checkpoint_id"], run_id, record.checkpoint["kind"], json.dumps(record.checkpoint, sort_keys=True)),
+                )
+                self._connection.execute("COMMIT")
+                return record
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
+    def record_feedback_revision(self, feedback, record: PlanRecord, return_event: RunEvent, submission_event: RunEvent, checkpoint_event: RunEvent) -> PlanRecord:
+        """Atomically persist feedback, return-to-plan, and a superseding plan."""
+        document = feedback.to_document()
+        request_digest = feedback.digest()
+        validate_plan_record(record)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute("SELECT request_digest FROM feedback WHERE feedback_id = ?", (feedback.feedback_id,)).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != request_digest:
+                        raise PlanningConflictError("feedback identity is bound to different inputs")
+                    stored = self.get_plan(record.manifest["plan_id"])
+                    self._connection.execute("COMMIT")
+                    return PlanRecord(stored.request_digest, stored.manifest, stored.checkpoint, stored.provenance, stored.artifacts, True)
+                predecessor = self._connection.execute(
+                    "SELECT bundle_json FROM plans WHERE plan_id = ?", (feedback.plan_id,)
+                ).fetchone()
+                if predecessor is None or json.loads(predecessor["bundle_json"])["manifest"].get("status") != "approved":
+                    raise FeedbackConflictError("feedback competes with an existing plan revision")
+                self._apply_locked(return_event)
+                self._apply_locked(submission_event)
+                self._apply_locked(checkpoint_event)
+                old_bundle = json.loads(predecessor["bundle_json"])
+                old_bundle["manifest"]["status"] = "superseded"
+                old_bundle["checkpoint"] = dict(old_bundle["checkpoint"])
+                old_bundle["checkpoint"].update({"state": "superseded", "superseded_by": record.checkpoint["checkpoint_id"]})
+                self._connection.execute(
+                    "UPDATE plans SET bundle_json = ? WHERE plan_id = ?",
+                    (json.dumps(old_bundle, sort_keys=True), feedback.plan_id),
+                )
+                old_checkpoint = self._connection.execute(
+                    "SELECT document_json FROM checkpoints WHERE checkpoint_id = ?", (feedback.checkpoint_id,)
+                ).fetchone()
+                if old_checkpoint is not None:
+                    old_document = json.loads(old_checkpoint["document_json"])
+                    old_document.update({"state": "superseded", "superseded_by": record.checkpoint["checkpoint_id"]})
+                    self._connection.execute(
+                        "UPDATE checkpoints SET document_json = ? WHERE checkpoint_id = ?",
+                        (json.dumps(old_document, sort_keys=True), feedback.checkpoint_id),
+                    )
+                self._connection.execute("INSERT INTO feedback(feedback_id, run_id, request_digest, document_json) VALUES (?, ?, ?, ?)", (feedback.feedback_id, feedback.run_id, request_digest, json.dumps(document, sort_keys=True)))
+                document["resolution"] = "applied"
+                self._connection.execute(
+                    "UPDATE feedback SET document_json = ? WHERE feedback_id = ?",
+                    (json.dumps(document, sort_keys=True), feedback.feedback_id),
+                )
+                self._connection.execute("INSERT INTO plans(plan_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)", (record.manifest["plan_id"], record.manifest["run_id"], record.request_digest, json.dumps(record.to_storage_document(), sort_keys=True)))
+                self._connection.execute("INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)", (record.checkpoint["checkpoint_id"], record.manifest["run_id"], record.checkpoint["kind"], json.dumps(record.checkpoint, sort_keys=True)))
+                self._connection.execute("COMMIT")
+                return record
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
+    def get_feedback(self, feedback_id: str) -> dict | None:
+        """Return a persisted feedback document by ID."""
+        with self._lock:
+            row = self._connection.execute("SELECT document_json FROM feedback WHERE feedback_id = ?", (feedback_id,)).fetchone()
+        return json.loads(row["document_json"]) if row is not None else None
+
     def record_analysis(
         self,
         record: AnalysisRecord,
@@ -174,6 +327,10 @@ class SQLiteRunStateStore:
                 self._apply_locked(outcome_event)
                 if checkpoint_event is not None:
                     self._apply_locked(checkpoint_event)
+                    self._connection.execute(
+                        "INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)",
+                        (record.checkpoint["checkpoint_id"], run_id, record.checkpoint["kind"], json.dumps(record.checkpoint, sort_keys=True)),
+                    )
                 self._connection.execute(
                     "INSERT INTO analyses(analysis_id, run_id, request_digest, bundle_json) VALUES (?, ?, ?, ?)",
                     (
@@ -266,11 +423,105 @@ class SQLiteRunStateStore:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 result = self._apply_locked(event)
+                if not result.duplicate:
+                    if event.event_type == "checkpoint_created":
+                        exists = self._connection.execute(
+                            "SELECT 1 FROM checkpoints WHERE checkpoint_id = ?", (event.checkpoint_id,)
+                        ).fetchone()
+                        if exists is not None:
+                            raise ContractValidationError("checkpoint ID is already bound to another creation")
+                        if exists is None:
+                            projection = {
+                                "contract": "atg.checkpoint", "version": "1.0", "checkpoint_id": event.checkpoint_id,
+                                "run_id": event.run_id, "kind": event.checkpoint_kind, "revision": result.state.revision,
+                                "state": "pending", "created_at": event.occurred_at,
+                            }
+                            self._connection.execute(
+                                "INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)",
+                                (event.checkpoint_id, event.run_id, event.checkpoint_kind, json.dumps(projection, sort_keys=True)),
+                            )
+                    if event.event_type == "decision_recorded":
+                        self._sync_checkpoint_decision_locked(event)
+                    elif event.event_type == "checkpoint_expired":
+                        self._sync_checkpoint_state_locked(event.checkpoint_id, "expired")
                 self._connection.execute("COMMIT")
                 return result
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
+
+    def get_checkpoint(self, checkpoint_id: str) -> dict | None:
+        """Return a durable checkpoint projection by ID."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT document_json FROM checkpoints WHERE checkpoint_id = ?", (checkpoint_id,)
+            ).fetchone()
+        return json.loads(row["document_json"]) if row is not None else None
+
+    def _sync_checkpoint_decision_locked(self, event: RunEvent) -> None:
+        """Apply a decision to checkpoint and plan projections in one transaction."""
+        row = self._connection.execute(
+            "SELECT document_json FROM checkpoints WHERE checkpoint_id = ?", (event.checkpoint_id,)
+        ).fetchone()
+        if row is None:
+            raise ContractValidationError("decision targets a missing checkpoint projection")
+        checkpoint = json.loads(row["document_json"])
+        checkpoint["state"] = event.decision if event.decision in {"blocked", "stated_gap"} else ("approved" if event.decision == "approved" else "rejected")
+        checkpoint["decision"] = {
+            "decision_id": event.decision_id,
+            "reviewer": {
+                "identity": {"kind": "person", "id": event.actor_id},
+                "role": event.actor_role,
+                "authorization_ref": event.authorization_ref,
+            },
+            "decided_at": event.occurred_at,
+            "value": event.decision,
+            **({"rationale": event.reason} if event.reason else {}),
+        }
+        self._connection.execute(
+            "UPDATE checkpoints SET document_json = ? WHERE checkpoint_id = ?",
+            (json.dumps(checkpoint, sort_keys=True), event.checkpoint_id),
+        )
+        if checkpoint.get("kind") == "plan_review":
+            plan_id = checkpoint.get("reviewed_artifact", {}).get("artifact_id", "").removeprefix("artifact-")
+            plan_row = self._connection.execute(
+                "SELECT bundle_json FROM plans WHERE plan_id = ?", (plan_id,)
+            ).fetchone()
+            if plan_row is not None:
+                bundle = json.loads(plan_row["bundle_json"])
+                bundle["manifest"]["status"] = "approved" if event.decision == "approved" else "rejected"
+                if event.decision == "approved":
+                    bundle["manifest"]["approved_by"] = event.actor_id
+                bundle["checkpoint"] = checkpoint
+                self._connection.execute(
+                    "UPDATE plans SET bundle_json = ? WHERE plan_id = ?",
+                    (json.dumps(bundle, sort_keys=True), plan_id),
+                )
+
+    def _sync_checkpoint_state_locked(self, checkpoint_id: str | None, state: str) -> None:
+        """Keep persisted checkpoint and plan projections aligned with lifecycle transitions."""
+        if checkpoint_id is None:
+            return
+        row = self._connection.execute(
+            "SELECT document_json FROM checkpoints WHERE checkpoint_id = ?", (checkpoint_id,)
+        ).fetchone()
+        if row is None:
+            return
+        checkpoint = json.loads(row["document_json"])
+        checkpoint["state"] = state
+        self._connection.execute(
+            "UPDATE checkpoints SET document_json = ? WHERE checkpoint_id = ?",
+            (json.dumps(checkpoint, sort_keys=True), checkpoint_id),
+        )
+        plan_id = checkpoint.get("reviewed_artifact", {}).get("artifact_id", "").removeprefix("artifact-")
+        plan_row = self._connection.execute("SELECT bundle_json FROM plans WHERE plan_id = ?", (plan_id,)).fetchone()
+        if plan_row is not None:
+            bundle = json.loads(plan_row["bundle_json"])
+            bundle["checkpoint"] = checkpoint
+            self._connection.execute(
+                "UPDATE plans SET bundle_json = ? WHERE plan_id = ?",
+                (json.dumps(bundle, sort_keys=True), plan_id),
+            )
 
     def _apply_locked(self, event: RunEvent, *, allow_unrecorded_admission: bool = False) -> TransitionResult:
         """Apply an event while the caller owns the active SQLite transaction."""

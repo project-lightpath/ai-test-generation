@@ -137,6 +137,22 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(document, {"error": "analysis not found"})
 
+    def test_plan_and_checkpoint_unknown_ids_return_not_found(self):
+        status, document = self.request("GET", "/plans/missing-plan")
+        self.assertEqual(status, 404)
+        self.assertEqual(document, {"error": "plan not found"})
+        status, document = self.request("GET", "/checkpoints/missing-checkpoint")
+        self.assertEqual(status, 404)
+        self.assertEqual(document, {"error": "checkpoint not found"})
+        status, document = self.request("GET", "/feedback/missing-feedback")
+        self.assertEqual(status, 404)
+        self.assertEqual(document, {"error": "feedback not found"})
+
+    def test_plan_submission_rejects_malformed_body(self):
+        status, document = self.request("POST", "/plans", {"plan_id": "plan-1"})
+        self.assertEqual(status, 400)
+        self.assertIn("identifier", document["error"])
+
     def test_analysis_reuses_id_only_for_identical_inputs(self):
         self.admit()
         status, _ = self.request("POST", "/analyses", self.analysis_body())
@@ -163,6 +179,32 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
             urlopen(request)
         self.assertEqual(malformed.exception.code, 400)
         malformed.exception.close()
+
+    def test_feedback_rejects_unknown_fields_and_invalid_category_or_severity(self):
+        for field, value in (("unexpected", True), ("category", "not-a-category"), ("severity", "critical")):
+            body = {
+                "feedback_id": "feedback-http-1", "run_id": "run-http-analysis", "plan_revision": 1,
+                "plan_artifact_digest": "sha256:" + "a" * 64, "checkpoint_id": "checkpoint-plan-1",
+                "created_at": "2099-11-09T20:02:00Z", "message": "clarify behavior",
+            }
+            body[field] = value
+            status, document = self.request("POST", "/plans/plan-http-1/feedback", body)
+            self.assertEqual(status, 400)
+            self.assertIn(field, document["error"])
+
+    def test_decision_rejects_unknown_fields_and_invalid_types(self):
+        body = {
+            "run_id": "run-http-analysis", "expected_revision": True, "occurred_at": "2099-11-09T20:02:00Z",
+            "decision": "approved", "decision_id": "decision-http-1", "actor_id": "reviewer-1",
+            "actor_role": "owner", "authorization_ref": "auth-1", "unexpected": "nope",
+        }
+        status, document = self.request("POST", "/checkpoints/checkpoint-1/decision", body)
+        self.assertEqual(status, 400)
+        self.assertIn("unexpected", document["error"])
+        body.pop("unexpected")
+        status, document = self.request("POST", "/checkpoints/checkpoint-1/decision", body)
+        self.assertEqual(status, 400)
+        self.assertIn("expected_revision", document["error"])
 
 
 if __name__ == "__main__":
