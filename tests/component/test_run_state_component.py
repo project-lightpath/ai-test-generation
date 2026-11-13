@@ -15,6 +15,7 @@ from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore  # noq
 from atg.application.admission import AdmissionRequest, AdmissionResult, CheckResult  # noqa: E402
 from atg.component.run_state_server import MAX_REQUEST_BYTES, create_server  # noqa: E402
 from atg.domain.run_state import DuplicateEventError, InvalidTransitionError, RunEvent, StaleEventError  # noqa: E402
+from atg.domain.schema_validation import ContractValidationError  # noqa: E402
 
 
 def admit_event(run_id="run-1", event_id="event-1", revision=0):
@@ -42,6 +43,20 @@ def record_admission(store, event):
 
 
 class SQLiteRunStateComponentTests(unittest.TestCase):
+    def test_checkpoint_id_cannot_be_reused_by_another_run(self):
+        store = SQLiteRunStateStore()
+        for run_id in ("run-1", "run-2"):
+            store.create_run(run_id, "2026-11-03T17:00:00Z")
+            record_admission(store, admit_event(run_id=run_id, event_id=f"admit-{run_id}"))
+            store.apply(RunEvent(f"start-{run_id}", run_id, "analysis_started", 1, "2026-11-03T17:00:01Z"))
+            store.apply(RunEvent(f"complete-{run_id}", run_id, "analysis_completed", 2, "2026-11-03T17:00:02Z"))
+            if run_id == "run-1":
+                store.apply(RunEvent("checkpoint-1", run_id, "checkpoint_created", 3, "2026-11-03T17:00:03Z", checkpoint_id="shared", checkpoint_kind="analysis_review"))
+            else:
+                with self.assertRaises(ContractValidationError):
+                    store.apply(RunEvent("checkpoint-2", run_id, "checkpoint_created", 3, "2026-11-03T17:00:03Z", checkpoint_id="shared", checkpoint_kind="analysis_review"))
+        store.close()
+
     def test_restart_replays_journal_and_preserves_duplicate_protection(self):
         with TemporaryDirectory() as directory:
             database = str(pathlib.Path(directory) / "run-state.sqlite3")

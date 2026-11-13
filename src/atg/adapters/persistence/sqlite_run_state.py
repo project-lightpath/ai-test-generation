@@ -123,6 +123,8 @@ class SQLiteRunStateStore:
         for row in rows:
             try:
                 bundle = json.loads(row["bundle_json"])
+                if not isinstance(bundle, dict):
+                    raise TypeError("stored bundle must be an object")
                 checkpoint = bundle.get("checkpoint")
                 if isinstance(checkpoint, dict) and checkpoint.get("checkpoint_id"):
                     self._connection.execute(
@@ -426,6 +428,8 @@ class SQLiteRunStateStore:
                         exists = self._connection.execute(
                             "SELECT 1 FROM checkpoints WHERE checkpoint_id = ?", (event.checkpoint_id,)
                         ).fetchone()
+                        if exists is not None:
+                            raise ContractValidationError("checkpoint ID is already bound to another creation")
                         if exists is None:
                             projection = {
                                 "contract": "atg.checkpoint", "version": "1.0", "checkpoint_id": event.checkpoint_id,
