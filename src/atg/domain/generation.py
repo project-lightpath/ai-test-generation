@@ -1,48 +1,124 @@
+"""Generation identities, path authorization, and artifact integrity helpers."""
+
 from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from typing import Mapping
 
-from atg.domain.digests import require_sha256_digest
+from atg.domain.digests import digests_equal, require_sha256_digest
 
 
 _ALLOWED_PATH_PATTERN = re.compile(r"^[A-Za-z0-9._/-]+\.(java|py|kt|ts|js|go)$")
+_DIFF_PATH_PATTERN = re.compile(r"^diff --git a/(.+) b/(.+)$")
 _MAX_CHANGED_FILES = 10
 
 
-def normalize_patch(patch: str) -> bytes:
-    lines = patch.replace("\r\n", "\n").split("\n")
-    normalized = [line.rstrip() for line in lines]
-    while normalized and normalized[-1] == "":
-        normalized.pop()
-    return "\n".join(normalized).encode() + (b"\n" if normalized else b"")
-
-
 def compute_patch_digest(patch: str) -> str:
-    return "sha256:" + hashlib.sha256(normalize_patch(patch)).hexdigest()
+    """Bind the exact UTF-8 patch bytes without semantic normalization."""
+    return "sha256:" + hashlib.sha256(patch.encode()).hexdigest()
 
 
-def validate_changed_files(changed_files: object, allowed_roots: tuple[str, ...] = ("src/test/", "tests/")) -> None:
-    if not isinstance(changed_files, list) or not changed_files:
-        raise ValueError("changed_files must be a non-empty list")
+def compute_materialized_digest(files: Mapping[str, str]) -> str:
+    """Bind the exact path-to-content mapping used by execution."""
+    encoded = json.dumps(dict(files), sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def derive_patch_paths(patch: str) -> tuple[str, ...]:
+    """Return changed paths from canonical git diff headers."""
+    paths: list[str] = []
+    for line in patch.splitlines():
+        match = _DIFF_PATH_PATTERN.fullmatch(line)
+        if match is None:
+            continue
+        before, after = match.groups()
+        if before != after:
+            raise ValueError("renamed generated paths are not supported")
+        paths.append(after)
+    if not paths:
+        raise ValueError("patch requires at least one git diff path")
+    if len(paths) != len(set(paths)):
+        raise ValueError("patch contains duplicate file sections")
+    return tuple(paths)
+
+
+def validate_changed_files(
+    changed_files: object,
+    allowed_roots: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Validate repository-relative paths against plan-owned test roots."""
+    if not isinstance(changed_files, (list, tuple)) or not changed_files:
+        raise ValueError("changed_files must be a non-empty sequence")
+    if not allowed_roots:
+        raise ValueError("approved plan does not declare allowed paths")
     if len(changed_files) != len(set(changed_files)):
         raise ValueError("changed_files must contain unique entries")
     if len(changed_files) > _MAX_CHANGED_FILES:
         raise ValueError("changed_files exceeds maximum allowed")
+    validated: list[str] = []
     for path in changed_files:
         if not isinstance(path, str) or not path:
             raise ValueError("changed_files entry must be a non-empty string")
-        if ".." in path or path.startswith("/") or path.startswith("\\"):
+        if (
+            path.startswith(("/", "\\"))
+            or "\\" in path
+            or posixpath.normpath(path) != path
+            or path.startswith("../")
+        ):
             raise ValueError(f"changed_files path traversal rejected: {path!r}")
-        if not any(path.startswith(root) for root in allowed_roots):
-            raise ValueError(f"changed_files outside allowed roots: {path!r}")
+        if not path.startswith(allowed_roots):
+            raise ValueError(f"changed_files outside approved plan paths: {path!r}")
         if not _ALLOWED_PATH_PATTERN.fullmatch(path):
             raise ValueError(f"changed_files has unsupported extension: {path!r}")
+        validated.append(path)
+    return tuple(validated)
 
 
-def validate_generation_manifest(manifest: Mapping[str, object], plan_manifest: Mapping[str, object] | None = None) -> None:
+def validate_candidate_paths(
+    patch: str,
+    materialized_files: Mapping[str, str],
+    allowed_roots: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Require patch headers, materialized files, and approved paths to agree."""
+    patch_paths = derive_patch_paths(patch)
+    materialized_paths = tuple(materialized_files)
+    if set(patch_paths) != set(materialized_paths):
+        raise ValueError("patch paths differ from materialized test files")
+    return validate_changed_files(materialized_paths, allowed_roots)
+
+
+def validate_identity(identity: object, field: str) -> dict[str, object]:
+    """Validate an attributable model, tool, worker, or subject identity."""
+    if not isinstance(identity, Mapping):
+        raise ValueError(f"{field} identity is required")
+    if not isinstance(identity.get("kind"), str) or not identity["kind"]:
+        raise ValueError(f"{field}.kind is required")
+    if not isinstance(identity.get("id"), str) or not identity["id"]:
+        raise ValueError(f"{field}.id is required")
+    if identity.get("version") is not None and not isinstance(identity["version"], str):
+        raise ValueError(f"{field}.version must be a string")
+    if identity.get("digest") is not None:
+        require_sha256_digest(identity["digest"], f"{field}.digest")
+    return dict(identity)
+
+
+def artifact_digest(content: object, media_type: str) -> tuple[str, int]:
+    """Compute an artifact digest using its persisted representation."""
+    if media_type == "text/x-diff":
+        encoded = str(content).encode()
+    else:
+        encoded = json.dumps(content, sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(encoded).hexdigest(), len(encoded)
+
+
+def validate_generation_manifest(
+    manifest: Mapping[str, object],
+    plan_manifest: Mapping[str, object] | None = None,
+) -> None:
+    """Validate plan binding and successful materialized-test metadata."""
     require_sha256_digest(manifest.get("plan_artifact_digest"), "plan_artifact_digest")
     if plan_manifest is not None:
         if manifest.get("plan_id") != plan_manifest.get("plan_id"):
@@ -50,18 +126,50 @@ def validate_generation_manifest(manifest: Mapping[str, object], plan_manifest: 
         if manifest.get("plan_revision") != plan_manifest.get("plan_revision"):
             raise ValueError("generation plan_revision does not match approved plan")
     if manifest.get("status") in {"generated", "verified"}:
-        if not manifest.get("patch_digest"):
-            raise ValueError("generated generation requires patch_digest")
+        if plan_manifest is not None:
+            validate_changed_files(
+                manifest.get("changed_files", []),
+                tuple(plan_manifest.get("allowed_paths", [])),
+            )
         require_sha256_digest(manifest.get("patch_digest"), "patch_digest")
-        validate_changed_files(manifest.get("changed_files"))
-    expected = manifest.get("patch_digest")
-    patch = manifest.get("patch_text")
-    if expected is not None and isinstance(patch, str):
-        computed = compute_patch_digest(patch)
-        if computed.lower() != str(expected).lower():
-            raise ValueError("patch_digest does not match patch content")
+        require_sha256_digest(
+            manifest.get("materialized_test_digest"), "materialized_test_digest"
+        )
+        if not manifest.get("attempts") or not manifest.get("artifacts"):
+            raise ValueError("successful generation requires attempts and artifacts")
 
 
-def generation_request_digest(generation_id: str, plan_id: str, run_id: str, expected_revision: int) -> str:
-    payload = {"generation_id": generation_id, "plan_id": plan_id, "run_id": run_id, "expected_revision": expected_revision}
-    return "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def validate_artifact_bundle(
+    manifest: Mapping[str, object], artifacts: tuple[Mapping[str, object], ...]
+) -> None:
+    """Recompute every persisted artifact and close manifest references."""
+    metadata_by_id: dict[str, Mapping[str, object]] = {}
+    for stored in artifacts:
+        metadata = stored.get("artifact")
+        if not isinstance(metadata, Mapping):
+            raise ValueError("generation artifact metadata is missing")
+        artifact_id = metadata.get("artifact_id")
+        if not isinstance(artifact_id, str) or artifact_id in metadata_by_id:
+            raise ValueError("generation artifact IDs must be unique")
+        digest, size = artifact_digest(stored.get("content"), str(metadata.get("media_type")))
+        if not digests_equal(metadata.get("digest"), digest) or metadata.get("size_bytes") != size:
+            raise ValueError("generation artifact metadata mismatch")
+        metadata_by_id[artifact_id] = metadata
+    if list(manifest.get("artifacts", [])) != list(metadata_by_id.values()):
+        raise ValueError("generation artifact references are not closed")
+    attempts = manifest.get("attempts", [])
+    for attempt in attempts:
+        if attempt.get("patch_artifact_id") not in metadata_by_id:
+            raise ValueError("generation attempt patch artifact is missing")
+        if attempt.get("materialized_artifact_id") not in metadata_by_id:
+            raise ValueError("generation attempt materialized artifact is missing")
+    if attempts:
+        final = attempts[-1]
+        patch = metadata_by_id[final["patch_artifact_id"]]
+        materialized = metadata_by_id[final["materialized_artifact_id"]]
+        if not digests_equal(patch.get("digest"), manifest.get("patch_digest")):
+            raise ValueError("generation patch digest differs from final attempt")
+        if not digests_equal(
+            materialized.get("digest"), manifest.get("materialized_test_digest")
+        ):
+            raise ValueError("generation materialized digest differs from final attempt")

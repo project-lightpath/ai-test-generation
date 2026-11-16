@@ -1,4 +1,6 @@
+import json
 import pathlib
+import sqlite3
 import sys
 import unittest
 from tempfile import TemporaryDirectory
@@ -6,118 +8,219 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
-from atg.application.generation import GenerationConflictError, GenerationRequest, GenerationService
-from atg.application.planning import PlanningRequest, PlanningService
-from atg.domain.run_state import RunEvent
-from tests.unit.test_analysis import analysis_request, admit, create_repository, supplied_evidence, supplied_objective
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.analysis import AnalysisService
+from atg.application.generation import (
+    GenerationConflictError,
+    GenerationRequest,
+    GenerationService,
+)
+from atg.application.planning import PlanningRequest, PlanningService
+from atg.domain.schema_validation import ContractValidationError
+from atg.domain.run_state import RunEvent
+from atg.ports.generation import PatchCandidate
+from tests.unit.test_analysis import (
+    analysis_request,
+    admit,
+    create_repository,
+    supplied_evidence,
+    supplied_objective,
+)
 
 
-def prepare_coding_store(root: pathlib.Path):
-    store = SQLiteRunStateStore()
+BASE = {"kind": "git-tree", "id": "base-tree", "version": "abc123"}
+CANDIDATE = {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}
+MODEL = {"kind": "model", "id": "model-alias", "version": "1"}
+TOOL = {"kind": "generation-tool", "id": "bounded-generator", "version": "1"}
+WORKER = {"kind": "worker", "id": "worker-1", "version": "1"}
+
+
+def prepare_coding_store(root: pathlib.Path, database=":memory:"):
+    store = SQLiteRunStateStore(database)
     base_request = analysis_request(root)
     evidence = supplied_evidence(content_digest=base_request.subject.content_digest)
-    request = analysis_request(root, objective_refs=("objective-1",), supplied_evidence=(evidence,), supplied_objectives=(supplied_objective(),))
+    request = analysis_request(
+        root,
+        objective_refs=("objective-1",),
+        supplied_evidence=(evidence,),
+        supplied_objectives=(supplied_objective(),),
+    )
     admit(store, root)
     analysis = AnalysisService(store, LocalRepositoryContextAdapter()).analyze(request)
     state = store.get_run("run-1")
-    store.apply(RunEvent("analysis-decision", "run-1", "decision_recorded", state.revision, "2099-11-09T17:00:01Z", checkpoint_id=analysis.checkpoint["checkpoint_id"], decision="approved", decision_id="decision-analysis", actor_id="reviewer-1", actor_role="owner", authorization_ref="auth-analysis"))
+    store.apply(RunEvent(
+        "analysis-decision", "run-1", "decision_recorded", state.revision,
+        "2099-11-09T17:00:01Z", checkpoint_id=analysis.checkpoint["checkpoint_id"],
+        decision="approved", decision_id="decision-analysis", actor_id="reviewer-1",
+        actor_role="owner", authorization_ref="auth-analysis",
+    ))
     state = store.get_run("run-1")
-    plan = PlanningService(store).plan(PlanningRequest("plan-1", "analysis-1", "run-1", state.revision, "2099-11-09T17:00:02Z"))
-    store.apply(RunEvent("plan-decision", "run-1", "decision_recorded", 7, "2099-11-09T17:00:03Z", checkpoint_id="checkpoint-plan-1", decision="approved", decision_id="decision-plan", actor_id="reviewer-1", actor_role="owner", authorization_ref="auth-plan"))
+    plan = PlanningService(store).plan(PlanningRequest(
+        "plan-1", "analysis-1", "run-1", state.revision, "2099-11-09T17:00:02Z"
+    ))
+    store.apply(RunEvent(
+        "plan-decision", "run-1", "decision_recorded", 7,
+        "2099-11-09T17:00:03Z", checkpoint_id="checkpoint-plan-1",
+        decision="approved", decision_id="decision-plan", actor_id="reviewer-1",
+        actor_role="owner", authorization_ref="auth-plan",
+    ))
     return store, plan
 
 
+def candidate(content=None, path="tests/test_generated.py"):
+    content = content or "def test_target_handler():\n    # target-handler\n    actual = target_handler()\n    assert actual == 2\n"
+    patch = f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n+{content.replace(chr(10), chr(10) + '+')}"
+    return PatchCandidate(patch, {path: content})
+
+
+def request(state, generation_id="generation-1", first=None, repairs=(), key="generation-key"):
+    first = first or candidate()
+    return GenerationRequest(
+        generation_id=generation_id,
+        plan_id="plan-1",
+        run_id="run-1",
+        expected_revision=state.revision,
+        created_at="2099-11-09T17:00:04Z",
+        idempotency_key=key,
+        patch_text=first.patch_text,
+        materialized_files=first.materialized_files,
+        base=BASE,
+        candidate=CANDIDATE,
+        model=MODEL,
+        tool=TOOL,
+        worker=WORKER,
+        repair_candidates=tuple(repairs),
+    )
+
+
 class GenerationServiceTests(unittest.TestCase):
-    def test_generation_persists_and_emits_events(self):
+    def test_generation_persists_exact_artifacts_and_events(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             create_repository(root)
-            store, plan = prepare_coding_store(root)
+            store, _ = prepare_coding_store(root)
+            record = GenerationService(store).generate(request(store.get_run("run-1")))
+            self.assertEqual(record.manifest["status"], "verified")
+            self.assertEqual(len(record.artifacts), 2)
+            self.assertEqual(record.artifacts[0]["content"], request(store.get_run("run-1")).patch_text)
+            persisted = store.get_generation("generation-1")
+            self.assertEqual(persisted.manifest, record.manifest)
             state = store.get_run("run-1")
-            patch = "diff --git a/src/test/java/AppTest.java\n+assertEquals(objective-1, 1)\n"
-            req = GenerationRequest("gen-1", "plan-1", "run-1", state.revision, "2099-11-09T17:00:04Z", patch, ["src/test/java/AppTest.java"], collected=1)
-            bundle = GenerationService(store).generate(req)
-            self.assertEqual(bundle["patch_digest"], req.patch_digest())
-            self.assertEqual(bundle["status"], "verified")
-            self.assertIsNotNone(store.get_generation("gen-1"))
-            self.assertIsNotNone(store.get_run("run-1").completed_generation_id)
-            self.assertFalse(store.get_run("run-1").generation_in_progress)
+            self.assertEqual(state.completed_generation_id, "generation-1")
+            self.assertFalse(state.generation_in_progress)
             store.close()
 
-    def test_generation_rejects_unapproved_path(self):
+    def test_generation_rejects_unapproved_path_without_completion(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             create_repository(root)
             store, _ = prepare_coding_store(root)
-            state = store.get_run("run-1")
-            patch = "change"
-            with self.assertRaises(ValueError):
-                GenerationRequest("gen-2", "plan-1", "run-1", state.revision, "2099-11-09T17:00:04Z", patch, ["src/main/java/App.java"], collected=1)
+            invalid = candidate(path="src/main/java/App.java")
+            record = GenerationService(store).generate(request(store.get_run("run-1"), first=invalid))
+            self.assertEqual(record.manifest["status"], "rejected")
+            self.assertIsNone(store.get_run("run-1").completed_generation_id)
+            store.close()
 
-    def test_generation_rejects_no_assertion(self):
+    def test_generation_uses_deterministic_collection_and_assertion_gates(self):
+        cases = {
+            "no-assertion": "def test_target_handler():\n    # target-handler\n    value = 1\n",
+            "no-collection": "# target-handler\nassert 2 == 2\n",
+            "weakened": "def test_target_handler():\n    # target-handler\n    assert True\n",
+            "wrong-target": "def test_other():\n    assert 2 == 2\n",
+        }
+        for generation_id, content in cases.items():
+            with self.subTest(generation_id=generation_id), TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                create_repository(root)
+                store, _ = prepare_coding_store(root)
+                record = GenerationService(store).generate(request(
+                    store.get_run("run-1"), generation_id, candidate(content)
+                ))
+                self.assertEqual(record.manifest["status"], "rejected")
+                store.close()
+
+    def test_generation_repairs_are_bounded_and_attributed(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            bad = candidate("def test_target_handler():\n    # target-handler\n    value = 1\n")
+            record = GenerationService(store).generate(request(
+                store.get_run("run-1"), first=bad, repairs=(candidate(),)
+            ))
+            self.assertEqual(record.manifest["status"], "verified")
+            self.assertEqual(len(record.attempts), 2)
+            self.assertEqual(record.attempts[0]["model"], MODEL)
+            self.assertEqual(record.attempts[0]["tool"], TOOL)
+            self.assertEqual(record.attempts[0]["worker"], WORKER)
+            store.close()
+
+    def test_three_failed_attempts_are_inconclusive(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            bad = candidate("def test_target_handler():\n    # target-handler\n    value = 1\n")
+            record = GenerationService(store).generate(request(
+                store.get_run("run-1"), first=bad, repairs=(bad, bad)
+            ))
+            self.assertEqual(record.manifest["status"], "inconclusive")
+            self.assertEqual(len(record.attempts), 3)
+            self.assertIsNone(store.get_run("run-1").completed_generation_id)
+            store.close()
+
+    def test_generation_idempotency_binds_patch_and_identities(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             create_repository(root)
             store, _ = prepare_coding_store(root)
             state = store.get_run("run-1")
-            patch = "no asserts here"
-            req = GenerationRequest("gen-3", "plan-1", "run-1", state.revision, "2099-11-09T17:00:04Z", patch, ["src/test/java/AppTest.java"], collected=1)
+            service = GenerationService(store)
+            first = service.generate(request(state))
+            duplicate = service.generate(request(state))
+            self.assertTrue(duplicate.duplicate)
+            self.assertEqual(first.manifest, duplicate.manifest)
+            changed = candidate("def test_target_handler():\n    # target-handler\n    assert 3 == 3\n")
             with self.assertRaises(GenerationConflictError):
-                GenerationService(store).generate(req)
+                service.generate(request(state, first=changed))
             store.close()
 
-    def test_generation_rejects_no_collection(self):
+    def test_generation_requires_exact_active_plan_digest(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             create_repository(root)
             store, _ = prepare_coding_store(root)
-            state = store.get_run("run-1")
-            patch = "assertEquals(objective-1, 1)"
-            req = GenerationRequest("gen-4", "plan-1", "run-1", state.revision, "2099-11-09T17:00:04Z", patch, ["src/test/java/AppTest.java"], collected=0)
+            row = store._connection.execute("SELECT state_json FROM runs WHERE run_id = 'run-1'").fetchone()
+            document = json.loads(row["state_json"])
+            document["active_plan_artifact_digest"] = "sha256:" + "f" * 64
+            store._connection.execute(
+                "UPDATE runs SET state_json = ? WHERE run_id = 'run-1'",
+                (json.dumps(document, sort_keys=True),),
+            )
             with self.assertRaises(GenerationConflictError):
-                GenerationService(store).generate(req)
+                GenerationService(store).generate(request(store.get_run("run-1")))
             store.close()
 
-    def test_generation_duplicate_is_idempotent(self):
+    def test_persisted_generation_tampering_fails_closed(self):
         with TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
+            root = pathlib.Path(directory) / "repo"
+            root.mkdir()
             create_repository(root)
-            store, _ = prepare_coding_store(root)
-            state = store.get_run("run-1")
-            patch = "assertEquals(objective-1, 1)"
-            req = GenerationRequest("gen-5", "plan-1", "run-1", state.revision, "2099-11-09T17:00:04Z", patch, ["src/test/java/AppTest.java"], collected=1)
-            svc = GenerationService(store)
-            first = svc.generate(req)
-            second = svc.generate(req)
-            self.assertEqual(first, second)
+            database = pathlib.Path(directory) / "generation.sqlite3"
+            store, _ = prepare_coding_store(root, database)
+            GenerationService(store).generate(request(store.get_run("run-1")))
+            bundle = json.loads(store._connection.execute(
+                "SELECT bundle_json FROM generations WHERE generation_id = 'generation-1'"
+            ).fetchone()["bundle_json"])
+            bundle["artifacts"][0]["content"] += "tampered"
+            store._connection.execute(
+                "UPDATE generations SET bundle_json = ? WHERE generation_id = 'generation-1'",
+                (json.dumps(bundle, sort_keys=True),),
+            )
+            with self.assertRaises(ContractValidationError):
+                store.get_generation("generation-1")
             store.close()
 
-    def test_generation_rejects_unapproved_plan(self):
-        with TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            create_repository(root)
-            store = SQLiteRunStateStore()
-            admit(store, root)
-            state = store.get_run("run-1")
-            patch = "assertEquals(x, 1)"
-            req = GenerationRequest("gen-6", "plan-1", "run-1", state.revision, "2099-11-09T17:00:04Z", patch, ["src/test/java/AppTest.java"], collected=1)
-            with self.assertRaises(Exception):
-                GenerationService(store).generate(req)
-            store.close()
-
-    def test_generation_rejects_weakened_assertion(self):
-        with TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            create_repository(root)
-            store, _ = prepare_coding_store(root)
-            state = store.get_run("run-1")
-            patch = "assertTrue(true) objective-1"
-            req = GenerationRequest("gen-7", "plan-1", "run-1", state.revision, "2099-11-09T17:00:04Z", patch, ["src/test/java/AppTest.java"], collected=1)
-            with self.assertRaises(GenerationConflictError):
-                GenerationService(store).generate(req)
-            store.close()
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ from typing import Iterator
 from atg.application.admission import AdmissionConflictError, AdmissionResult, CheckResult
 from atg.application.analysis import AnalysisConflictError, AnalysisRecord
 from atg.application.feedback import FeedbackConflictError
+from atg.application.generation import GenerationConflictError, GenerationRecord, validate_generation_record
 from atg.application.planning import PlanRecord, PlanningConflictError, validate_plan_record
 from atg.domain.schema_validation import ContractValidationError
 from atg.domain.run_state import (
@@ -102,6 +103,15 @@ class SQLiteRunStateStore:
             );
             CREATE INDEX IF NOT EXISTS generations_by_run ON generations(run_id);
             CREATE INDEX IF NOT EXISTS generations_by_plan ON generations(plan_id);
+            CREATE TABLE IF NOT EXISTS generation_attempts (
+                generation_id TEXT NOT NULL,
+                attempt INTEGER NOT NULL,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                request_digest TEXT NOT NULL,
+                document_json TEXT NOT NULL,
+                artifacts_json TEXT NOT NULL,
+                PRIMARY KEY (generation_id, attempt)
+            );
             """
         )
         self._backfill_checkpoint_projections()
@@ -302,41 +312,125 @@ class SQLiteRunStateStore:
                 self._connection.execute("ROLLBACK")
                 raise
 
-    def get_generation(self, generation_id: str) -> dict | None:
+    def get_generation(self, generation_id: str) -> GenerationRecord | None:
+        """Load and fully verify a durable generation bundle."""
         with self._lock:
-            row = self._connection.execute("SELECT bundle_json, request_digest FROM generations WHERE generation_id = ?", (generation_id,)).fetchone()
+            row = self._connection.execute(
+                "SELECT generation_id, run_id, plan_id, request_digest, bundle_json FROM generations WHERE generation_id = ?",
+                (generation_id,),
+            ).fetchone()
         if row is None:
             return None
-        doc = json.loads(row["bundle_json"])
-        if doc.get("generation_id") != generation_id:
-            raise ContractValidationError("persisted generation id mismatch")
-        doc["request_digest"] = row["request_digest"]
-        return doc
+        try:
+            record = GenerationRecord.from_storage_document(json.loads(row["bundle_json"]))
+            if (
+                row["generation_id"] != record.manifest.get("generation_id")
+                or row["run_id"] != record.manifest.get("run_id")
+                or row["plan_id"] != record.manifest.get("plan_id")
+                or row["request_digest"] != record.request_digest
+            ):
+                raise ContractValidationError("persisted generation row metadata differs from bundle")
+            return record
+        except ContractValidationError:
+            raise
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise ContractValidationError("persisted generation bundle is corrupt") from exc
 
-    def record_generation(self, generation_id: str, run_id: str, plan_id: str, request_digest: str, bundle: dict, started_event: RunEvent, completed_event: RunEvent) -> dict:
-        from atg.domain.schema_validation import validate_contract_document
-        validate_contract_document(bundle, "generation")
-        if started_event.run_id != run_id or completed_event.run_id != run_id:
+    def record_generation_attempt(
+        self,
+        generation_id: str,
+        run_id: str,
+        request_digest: str,
+        attempt: dict,
+        artifacts: tuple[dict, ...],
+    ) -> None:
+        """Persist one attributed attempt before another candidate is requested."""
+        attempt_number = attempt["attempt"]
+        document_json = json.dumps(attempt, sort_keys=True)
+        artifacts_json = json.dumps(artifacts, sort_keys=True)
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute(
+                    "SELECT run_id, request_digest, document_json, artifacts_json FROM generation_attempts WHERE generation_id = ? AND attempt = ?",
+                    (generation_id, attempt_number),
+                ).fetchone()
+                if existing is not None:
+                    if (
+                        existing["run_id"] != run_id
+                        or existing["request_digest"] != request_digest
+                        or existing["document_json"] != document_json
+                        or existing["artifacts_json"] != artifacts_json
+                    ):
+                        raise GenerationConflictError("generation attempt identity is bound to different inputs")
+                    self._connection.execute("COMMIT")
+                    return
+                self._connection.execute(
+                    "INSERT INTO generation_attempts(generation_id, attempt, run_id, request_digest, document_json, artifacts_json) VALUES (?, ?, ?, ?, ?, ?)",
+                    (generation_id, attempt_number, run_id, request_digest, document_json, artifacts_json),
+                )
+                self._connection.execute("COMMIT")
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
+    def record_generation(
+        self,
+        record: GenerationRecord,
+        started_event: RunEvent,
+        terminal_event: RunEvent,
+    ) -> GenerationRecord:
+        """Atomically finalize generation and its lifecycle events."""
+        validate_generation_record(record)
+        generation_id = str(record.manifest["generation_id"])
+        run_id = str(record.manifest["run_id"])
+        plan_id = str(record.manifest["plan_id"])
+        if started_event.run_id != run_id or terminal_event.run_id != run_id:
             raise ValueError("generation events must belong to generation run")
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                existing = self._connection.execute("SELECT request_digest, bundle_json FROM generations WHERE generation_id = ?", (generation_id,)).fetchone()
+                existing = self._connection.execute(
+                    "SELECT request_digest, bundle_json FROM generations WHERE generation_id = ?",
+                    (generation_id,),
+                ).fetchone()
                 if existing is not None:
-                    if existing["request_digest"] != request_digest:
-                        from atg.application.generation import GenerationConflictError
+                    if existing["request_digest"] != record.request_digest:
                         raise GenerationConflictError("generation identity is bound to different inputs")
                     self._connection.execute("COMMIT")
-                    doc = json.loads(existing["bundle_json"])
-                    doc["request_digest"] = existing["request_digest"]
-                    return doc
+                    return GenerationRecord.from_storage_document(
+                        json.loads(existing["bundle_json"]), duplicate=True
+                    )
+                attempt_rows = self._connection.execute(
+                    "SELECT request_digest, document_json, artifacts_json FROM generation_attempts WHERE generation_id = ? ORDER BY attempt",
+                    (generation_id,),
+                ).fetchall()
+                persisted_attempts = tuple(json.loads(row["document_json"]) for row in attempt_rows)
+                persisted_artifacts = tuple(
+                    artifact
+                    for row in attempt_rows
+                    for artifact in json.loads(row["artifacts_json"])
+                )
+                if (
+                    any(row["request_digest"] != record.request_digest for row in attempt_rows)
+                    or persisted_attempts != record.attempts
+                    or persisted_artifacts != record.artifacts
+                ):
+                    raise ContractValidationError("persisted generation attempts differ from final bundle")
                 self._apply_locked(started_event)
-                self._apply_locked(completed_event)
-                self._connection.execute("INSERT INTO generations(generation_id, run_id, plan_id, request_digest, bundle_json) VALUES (?, ?, ?, ?, ?)", (generation_id, run_id, plan_id, request_digest, json.dumps(bundle, sort_keys=True)))
+                self._apply_locked(terminal_event)
+                self._connection.execute(
+                    "INSERT INTO generations(generation_id, run_id, plan_id, request_digest, bundle_json) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        generation_id,
+                        run_id,
+                        plan_id,
+                        record.request_digest,
+                        json.dumps(record.to_storage_document(), sort_keys=True),
+                    ),
+                )
                 self._connection.execute("COMMIT")
-                bundle = dict(bundle)
-                bundle["request_digest"] = request_digest
-                return bundle
+                return record
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise

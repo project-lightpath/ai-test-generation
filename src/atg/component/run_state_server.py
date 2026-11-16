@@ -24,6 +24,7 @@ from atg.application.feedback import FeedbackConflictError, FeedbackRequest
 from atg.application.generation import GenerationConflictError, GenerationRequest, GenerationService
 from atg.application.readiness import PlatformReadinessService
 from atg.domain.repository_analysis import RepositorySubject
+from atg.ports.generation import PatchCandidate
 from atg.domain.schema_validation import ContractValidationError, contract_asset_path
 from atg.domain.run_state import (
     InvalidEventError,
@@ -45,7 +46,7 @@ ANALYSIS_FIELDS = frozenset({
 })
 PLAN_FIELDS = frozenset({"plan_id", "analysis_id", "run_id", "expected_revision", "occurred_at"})
 FEEDBACK_FIELDS = frozenset({"feedback_id", "run_id", "plan_revision", "plan_artifact_digest", "checkpoint_id", "created_at", "message", "category", "severity", "actor_id"})
-GENERATION_FIELDS = frozenset({"generation_id", "plan_id", "run_id", "expected_revision", "created_at", "patch_text", "changed_files", "base", "candidate", "model", "collected"})
+GENERATION_FIELDS = frozenset({"generation_id", "plan_id", "run_id", "expected_revision", "created_at", "patch_text", "materialized_files", "base", "candidate", "model", "tool", "worker", "repair_candidates"})
 DECISION_FIELDS = frozenset({"run_id", "expected_revision", "occurred_at", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref", "reason"})
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
@@ -164,8 +165,8 @@ def create_server(
                     feedback = store.get_feedback(parts[1])
                     self._respond(200, feedback) if feedback is not None else self._respond(404, {"error": "feedback not found"})
                 elif len(parts) == 2 and parts[0] == "generations":
-                    gen = store.get_generation(parts[1])
-                    self._respond(200, gen) if gen is not None else self._respond(404, {"error": "generation not found"})
+                    generation = store.get_generation(parts[1])
+                    self._respond(200, _generation_document(generation)) if generation is not None else self._respond(404, {"error": "generation not found"})
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
                 elif parts == ["readiness"]:
@@ -485,18 +486,27 @@ def create_server(
                         raise BadRequestError(str(exc)) from exc
                     if not isinstance(body.get("expected_revision"), int) or isinstance(body.get("expected_revision"), bool) or body["expected_revision"] < 0:
                         raise BadRequestError("expected_revision must be a non-negative integer")
-                    if not isinstance(body.get("patch_text"), str) or not body["patch_text"]:
-                        raise BadRequestError("patch_text is required")
-                    if not isinstance(body.get("changed_files"), list):
-                        raise BadRequestError("changed_files must be a list")
-                    from atg.domain.generation import validate_changed_files
+                    idempotency_key = self.headers.get("Idempotency-Key")
+                    if not idempotency_key:
+                        raise BadRequestError("generation requires Idempotency-Key header")
                     try:
-                        validate_changed_files(body["changed_files"])
-                    except ValueError as exc:
+                        validate_identifier(idempotency_key, "Idempotency-Key")
+                        repair_candidates = tuple(
+                            PatchCandidate(candidate["patch_text"], candidate["materialized_files"])
+                            for candidate in body.get("repair_candidates", [])
+                        )
+                        request = GenerationRequest(
+                            generation_id=body["generation_id"], plan_id=body["plan_id"], run_id=body["run_id"],
+                            expected_revision=body["expected_revision"], created_at=body["created_at"],
+                            idempotency_key=idempotency_key, patch_text=body["patch_text"],
+                            materialized_files=body["materialized_files"], base=body["base"], candidate=body["candidate"],
+                            model=body["model"], tool=body["tool"], worker=body["worker"],
+                            repair_candidates=repair_candidates,
+                        )
+                    except (KeyError, TypeError, ValueError) as exc:
                         raise BadRequestError(str(exc)) from exc
-                    request = GenerationRequest(generation_id=body["generation_id"], plan_id=body["plan_id"], run_id=body["run_id"], expected_revision=body["expected_revision"], created_at=body["created_at"], patch_text=body["patch_text"], changed_files=body["changed_files"], base=body.get("base"), candidate=body.get("candidate"), model=body.get("model"), collected=body.get("collected", 1))
                     result = generation_service.generate(request)
-                    self._respond(201, result)
+                    self._respond(200 if result.duplicate else 201, _generation_document(result))
                     return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
@@ -614,6 +624,16 @@ def _plan_document(record) -> dict:
         "manifest": dict(record.manifest),
         "checkpoint": dict(record.checkpoint),
         "provenance": dict(record.provenance),
+        "artifacts": [dict(document["artifact"]) for document in record.artifacts],
+    }
+
+
+def _generation_document(record) -> dict:
+    """Serialize generation metadata without exposing generated source content."""
+    return {
+        "duplicate": record.duplicate,
+        "manifest": dict(record.manifest),
+        "attempts": [dict(attempt) for attempt in record.attempts],
         "artifacts": [dict(document["artifact"]) for document in record.artifacts],
     }
 
