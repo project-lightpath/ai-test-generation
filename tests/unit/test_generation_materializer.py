@@ -1,4 +1,5 @@
 import pathlib
+import subprocess
 import sys
 import unittest
 from tempfile import TemporaryDirectory
@@ -12,6 +13,43 @@ from atg.ports.generation import MaterializationResult, PatchCandidate
 
 
 class GenerationMaterializerTests(unittest.TestCase):
+    def test_canonical_patch_preserves_final_newline_and_applies_exactly(self):
+        cases = (
+            ("tests/NewTest.java", None, "class NewTest {}"),
+            ("tests/ExistingTest.java", "class ExistingTest {}\n", "class ExistingTest {}"),
+            ("tests/RestoreNewline.java", "class RestoreNewline {}", "class RestoreNewline {}\n"),
+        )
+        for path, before, after in cases:
+            with self.subTest(path=path), TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                subprocess.run(["git", "init", "--quiet"], cwd=root, check=True)
+                target = root / path
+                target.parent.mkdir(parents=True)
+                if before is not None:
+                    target.write_bytes(before.encode())
+                patch = canonical_patch(
+                    {} if before is None else {path: before},
+                    {path: after},
+                )
+                parsed = subprocess.run(
+                    ["git", "apply", "--numstat", "-"],
+                    cwd=root,
+                    input=patch,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertTrue(parsed.stdout.strip())
+                subprocess.run(
+                    ["git", "apply", "-"],
+                    cwd=root,
+                    input=patch,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                )
+                self.assertEqual(target.read_bytes(), after.encode())
+
     def test_materializes_exact_patch_within_allowed_workspace(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory) / "workspace"

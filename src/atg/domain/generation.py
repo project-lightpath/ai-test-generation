@@ -42,22 +42,19 @@ def canonical_patch(base_files: Mapping[str, str], materialized_files: Mapping[s
             parts.append("new file mode 100644\n")
         old_lines = before.splitlines(keepends=True) if before is not None else []
         new_lines = after.splitlines(keepends=True)
-        if old_lines and not old_lines[-1].endswith(("\n", "\r")):
-            old_lines[-1] += "\n"
-        if new_lines and not new_lines[-1].endswith(("\n", "\r")):
-            new_lines[-1] += "\n"
         from_name = "/dev/null" if created else f"a/{path}"
         to_name = f"b/{path}"
-        parts.extend(
-            difflib.unified_diff(
-                old_lines,
-                new_lines,
-                fromfile=from_name,
-                tofile=to_name,
-                n=3,
-                lineterm="\n",
-            )
-        )
+        for line in difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=from_name,
+            tofile=to_name,
+            n=3,
+            lineterm="\n",
+        ):
+            parts.append(line)
+            if line.startswith((" ", "+", "-")) and not line.endswith("\n"):
+                parts.append("\n\\ No newline at end of file\n")
     return "".join(parts)
 
 
@@ -231,6 +228,7 @@ def validate_generation_manifest(
         if attempts and (
             handoff.get("patch_artifact_id") != attempts[-1].get("patch_artifact_id")
             or handoff.get("materialized_artifact_id") != attempts[-1].get("materialized_artifact_id")
+            or handoff.get("base_artifact_id") != attempts[-1].get("base_artifact_id")
         ):
             raise ValueError("materialization handoff artifact references differ from final attempt")
 
@@ -240,6 +238,7 @@ def validate_artifact_bundle(
 ) -> None:
     """Recompute every persisted artifact and close manifest references."""
     metadata_by_id: dict[str, Mapping[str, object]] = {}
+    content_by_id: dict[str, object] = {}
     for stored in artifacts:
         metadata = stored.get("artifact")
         if not isinstance(metadata, Mapping):
@@ -251,6 +250,7 @@ def validate_artifact_bundle(
         if not digests_equal(metadata.get("digest"), digest) or metadata.get("size_bytes") != size:
             raise ValueError("generation artifact metadata mismatch")
         metadata_by_id[artifact_id] = metadata
+        content_by_id[artifact_id] = stored.get("content")
     if list(manifest.get("artifacts", [])) != list(metadata_by_id.values()):
         raise ValueError("generation artifact references are not closed")
     attempts = manifest.get("attempts", [])
@@ -259,6 +259,34 @@ def validate_artifact_bundle(
             raise ValueError("generation attempt patch artifact is missing")
         if attempt.get("materialized_artifact_id") not in metadata_by_id:
             raise ValueError("generation attempt materialized artifact is missing")
+        if attempt.get("base_artifact_id") not in metadata_by_id:
+            raise ValueError("generation attempt base-files artifact is missing")
+        patch_id = attempt["patch_artifact_id"]
+        materialized_id = attempt["materialized_artifact_id"]
+        base_id = attempt["base_artifact_id"]
+        patch = content_by_id[patch_id]
+        materialized = content_by_id[materialized_id]
+        base = content_by_id[base_id]
+        if (
+            metadata_by_id[patch_id].get("media_type") != "text/x-diff"
+            or metadata_by_id[materialized_id].get("media_type")
+            != "application/vnd.atg.materialized-tests+json"
+            or metadata_by_id[base_id].get("media_type") != "application/vnd.atg.base-files+json"
+            or not isinstance(patch, str)
+            or not isinstance(materialized, Mapping)
+            or not isinstance(base, Mapping)
+            or any(not isinstance(key, str) or not isinstance(value, str) for key, value in materialized.items())
+            or any(not isinstance(key, str) or not isinstance(value, str) for key, value in base.items())
+        ):
+            raise ValueError("generation attempt artifacts have invalid content or media types")
+        path_check_passed = any(
+            check.get("name") == "approved_path" and check.get("status") == "pass"
+            for check in attempt.get("checks", [])
+        )
+        if path_check_passed and patch != canonical_patch(base, materialized):
+            raise ValueError("generation attempt patch does not match base and materialized artifacts")
+        if not digests_equal(compute_patch_digest(patch), attempt.get("output_digest")):
+            raise ValueError("generation attempt output digest differs from patch artifact")
     if attempts:
         final = attempts[-1]
         patch = metadata_by_id[final["patch_artifact_id"]]

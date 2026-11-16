@@ -82,6 +82,7 @@ class RunEvent:
     plan_artifact_digest: str | None = None
     feedback_id: str | None = None
     generation_id: str | None = None
+    generation_request_digest: str | None = None
     artifact_id: str | None = None
     artifact_digest: str | None = None
 
@@ -124,6 +125,11 @@ class RunEvent:
                 require_sha256_digest(self.artifact_digest, "artifact_digest")
             except ValueError as exc:
                 raise InvalidEventError(str(exc)) from exc
+        if self.generation_request_digest is not None:
+            try:
+                require_sha256_digest(self.generation_request_digest, "generation_request_digest")
+            except ValueError as exc:
+                raise InvalidEventError(str(exc)) from exc
         for field_name in ("actor_role", "reason"):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, str):
@@ -145,8 +151,10 @@ class RunEvent:
             raise InvalidEventError(f"{self.event_type} requires a reason")
         if self.event_type == "return_to_plan" and not self.feedback_id:
             raise InvalidEventError("return_to_plan requires feedback_id")
-        if self.event_type == "generation_started" and not self.generation_id:
-            raise InvalidEventError("generation_started requires generation_id")
+        if self.event_type == "generation_started" and not all(
+            (self.generation_id, self.generation_request_digest)
+        ):
+            raise InvalidEventError("generation_started requires generation_id and request digest")
         if self.event_type in {"generation_rejected", "generation_inconclusive"} and not self.generation_id:
             raise InvalidEventError(f"{self.event_type} requires generation_id")
         if self.event_type == "generation_completed" and not all(
@@ -662,7 +670,7 @@ def event_fingerprint(event: RunEvent) -> str:
     """Return the SHA-256 fingerprint of an event payload."""
     optional_payload_fields = {
         "plan_id", "plan_revision", "plan_artifact_id", "plan_artifact_digest",
-        "feedback_id", "generation_id", "artifact_id", "artifact_digest",
+        "feedback_id", "generation_id", "generation_request_digest", "artifact_id", "artifact_digest",
     }
     values = {
         key: value for key, value in event.__dict__.items()

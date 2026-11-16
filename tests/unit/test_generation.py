@@ -3,10 +3,12 @@ import ast
 import pathlib
 import sys
 import unittest
+from dataclasses import replace
 from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
+from atg.adapters.generation.deterministic import FilesystemPatchMaterializer
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.analysis import AnalysisService
@@ -20,7 +22,11 @@ from atg.application.generation import (
 )
 from atg.application.planning import PlanningRequest, PlanningService
 from atg.domain.schema_validation import ContractValidationError
-from atg.domain.generation import canonical_patch
+from atg.domain.generation import (
+    canonical_patch,
+    compute_materialized_digest,
+    compute_patch_digest,
+)
 from atg.ports.generation import (
     GeneratedCandidate,
     GenerationProvenance,
@@ -155,7 +161,7 @@ class GenerationServiceTests(unittest.TestCase):
             req = request(store.get_run("run-1"))
             record = generation_service(store, (generated(candidate()),)).generate(req)
             self.assertEqual(record.manifest["status"], "verified")
-            self.assertEqual(len(record.artifacts), 2)
+            self.assertEqual(len(record.artifacts), 3)
             self.assertEqual(record.artifacts[0]["content"], candidate().patch_text)
             handoff = record.manifest["materialization_handoff"]
             self.assertEqual(handoff["status"], "ready")
@@ -174,6 +180,7 @@ class GenerationServiceTests(unittest.TestCase):
                 handoff["materialized_artifact_id"],
                 record.attempts[-1]["materialized_artifact_id"],
             )
+            self.assertEqual(handoff["base_artifact_id"], record.attempts[-1]["base_artifact_id"])
             self.assertEqual(
                 [item["subject"] for item in handoff["subjects"]], [BASE, CANDIDATE]
             )
@@ -182,6 +189,40 @@ class GenerationServiceTests(unittest.TestCase):
             state = store.get_run("run-1")
             self.assertEqual(state.completed_generation_id, "generation-1")
             self.assertFalse(state.generation_in_progress)
+            store.close()
+
+    def test_persisted_preimage_reconstructs_candidate_for_materialization(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, plan = prepare_coding_store(root)
+            path = "tests/test_existing.py"
+            before = "def test_target_handler():\n    target_handler()\n    assert value == 0\n"
+            after = "def test_target_handler():\n    target_handler()\n    assert value == 1\n"
+            original = PatchCandidate(
+                canonical_patch({path: before}, {path: after}),
+                {path: after},
+                {path: before},
+            )
+            record = generation_service(store, (generated(original),)).generate(
+                request(store.get_run("run-1"))
+            )
+            restored = store.get_generation(record.manifest["generation_id"]).candidate_for_attempt(1)
+            self.assertEqual(restored, original)
+
+            workspace = root / "workspace"
+            target = workspace / path
+            target.parent.mkdir(parents=True)
+            target.write_text(before)
+            FilesystemPatchMaterializer().materialize(
+                restored,
+                str(workspace),
+                CANDIDATE,
+                tuple(plan.manifest["allowed_paths"]),
+                compute_patch_digest(restored.patch_text),
+                compute_materialized_digest(restored.materialized_files),
+            )
+            self.assertEqual(target.read_text(), after)
             store.close()
 
     def test_materialization_handoff_tampering_fails_integrity_validation(self):
@@ -306,6 +347,43 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertTrue(store.get_run("run-1").generation_in_progress)
             record = generation_service(store, (generated(candidate()),)).generate(req)
             self.assertEqual(record.manifest["status"], "verified")
+            store.close()
+
+    def test_resume_rejects_conflicting_request_before_adapter_or_attempt(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            req = request(store.get_run("run-1"))
+            mismatched = GenerationProvenance(
+                model=MODEL,
+                model_endpoint={"kind": "model-endpoint", "id": "wrong", "version": "1"},
+                tool=TOOL,
+                worker=WORKER,
+                prompt_digest=FAKE_PROVENANCE.prompt_digest,
+                config_digest=FAKE_PROVENANCE.config_digest,
+                invocation_digest=FAKE_PROVENANCE.invocation_digest,
+            )
+            with self.assertRaises(GenerationConflictError):
+                generation_service(store, (GeneratedCandidate(candidate(), mismatched),)).generate(req)
+            self.assertTrue(store.get_run("run-1").generation_in_progress)
+            self.assertEqual(store.get_generation_attempts(req.generation_id, req.digest()), ((), ()))
+
+            changed = replace(req, created_at="2099-11-09T17:00:05Z")
+            calls = []
+
+            class CountingGenerator:
+                def generate(self, generation_request, attempt, feedback):
+                    calls.append(attempt)
+                    return generated(candidate())
+
+            with self.assertRaisesRegex(GenerationConflictError, "different request inputs"):
+                generation_service(store, generator=CountingGenerator()).generate(changed)
+            self.assertEqual(calls, [])
+            self.assertEqual(store.get_generation_attempts(req.generation_id, req.digest()), ((), ()))
+
+            recovered = generation_service(store, (generated(candidate()),)).generate(req)
+            self.assertEqual(recovered.manifest["status"], "verified")
             store.close()
 
     def test_missing_initial_candidate_remains_resumable(self):

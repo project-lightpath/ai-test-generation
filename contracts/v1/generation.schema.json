@@ -52,7 +52,7 @@
     "materialization_handoff": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "generation_id", "run_id", "plan_id", "plan_revision", "plan_artifact_digest", "plan_checkpoint_id", "plan_decision_id", "subjects", "allowed_paths", "changed_files", "patch_digest", "materialized_test_digest", "patch_artifact_id", "materialized_artifact_id"],
+      "required": ["status", "generation_id", "run_id", "plan_id", "plan_revision", "plan_artifact_digest", "plan_checkpoint_id", "plan_decision_id", "subjects", "allowed_paths", "changed_files", "patch_digest", "materialized_test_digest", "patch_artifact_id", "materialized_artifact_id", "base_artifact_id"],
       "properties": {
         "status": { "const": "ready" },
         "generation_id": { "$ref": "common.schema.json#/$defs/id" },
@@ -68,7 +68,8 @@
         "patch_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
         "materialized_test_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
         "patch_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
-        "materialized_artifact_id": { "$ref": "common.schema.json#/$defs/id" }
+        "materialized_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
+        "base_artifact_id": { "$ref": "common.schema.json#/$defs/id" }
       }
     },
     "attempts": {
@@ -78,13 +79,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["attempt", "input_digest", "output_digest", "patch_artifact_id", "materialized_artifact_id", "changed_files", "model", "model_endpoint", "tool", "worker", "prompt_digest", "config_digest", "invocation_digest", "status", "checks"],
+        "required": ["attempt", "input_digest", "output_digest", "patch_artifact_id", "materialized_artifact_id", "base_artifact_id", "changed_files", "model", "model_endpoint", "tool", "worker", "prompt_digest", "config_digest", "invocation_digest", "status", "checks"],
         "properties": {
           "attempt": { "type": "integer", "minimum": 1, "maximum": 3 },
           "input_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
           "output_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
           "patch_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
           "materialized_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
+          "base_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
           "changed_files": { "type": "array", "maxItems": 10, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
           "model": { "$ref": "common.schema.json#/$defs/identity" },
           "model_endpoint": { "$ref": "common.schema.json#/$defs/identity" },

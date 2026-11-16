@@ -27,9 +27,10 @@
     ,"plan_revision": { "type": "integer", "minimum": 1 }
     ,"plan_artifact_id": { "$ref": "common.schema.json#/$defs/id" }
     ,"plan_artifact_digest": { "$ref": "common.schema.json#/$defs/digest" }
-     ,"feedback_id": { "$ref": "common.schema.json#/$defs/id" }
-     ,"generation_id": { "$ref": "common.schema.json#/$defs/id" }
-     ,"artifact_id": { "$ref": "common.schema.json#/$defs/id" }
+      ,"feedback_id": { "$ref": "common.schema.json#/$defs/id" }
+      ,"generation_id": { "$ref": "common.schema.json#/$defs/id" }
+      ,"generation_request_digest": { "$ref": "common.schema.json#/$defs/payload_digest" }
+      ,"artifact_id": { "$ref": "common.schema.json#/$defs/id" }
      ,"artifact_digest": { "$ref": "common.schema.json#/$defs/digest" }
   },
   "allOf": [
@@ -71,9 +72,9 @@
            "properties": { "event_type": { "const": "plan_submitted" } },
            "required": ["plan_id", "plan_revision", "plan_artifact_id", "plan_artifact_digest"]
          },
-         {
-           "properties": { "event_type": { "const": "generation_started" } },
-           "required": ["generation_id"]
+          {
+            "properties": { "event_type": { "const": "generation_started" } },
+            "required": ["generation_id", "generation_request_digest"]
          },
          {
            "properties": { "event_type": { "const": "generation_completed" } },

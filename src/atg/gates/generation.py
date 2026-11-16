@@ -14,11 +14,14 @@ _JAVA_TEST_ANNOTATION = re.compile(
     r"@(?:[A-Za-z_$][\w$]*\.)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\b"
 )
 _JAVA_TEST_METHOD = re.compile(
-    r"([A-Za-z_$][\w$]*)\s*\([^{}]*\)\s*(?:(?:throws\s+"
+    r"(?P<name>[A-Za-z_$][\w$]*)\s*\((?P<parameters>[^{}]*)\)\s*(?:(?:throws\s+"
     r"[A-Za-z_$][\w$.]*(?:\s*,\s*[A-Za-z_$][\w$.]*)*)|"
     r"(?::\s*[A-Za-z_$][\w$.<>?,]*))?\s*$"
 )
 _JAVA_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+_JAVA_TYPE_DECLARATION = re.compile(
+    r"\b(?:class|interface|enum|record|object)\s+([A-Za-z_$][\w$]*)\b[^{;]*\{"
+)
 _JAVA_ASSERT_STATEMENT = re.compile(r"\bassert\s+([^;]+);")
 _METHOD_SUMMARY = tuple[int, int, int, set[str]]
 _TRIVIAL_JAVA_ASSERTION = re.compile(
@@ -248,24 +251,67 @@ def _java_strong_assertion(source: str, match: re.Match[str]) -> bool:
     return False
 
 
+def _find_matching_brace(source: str, opening: int) -> int:
+    depth = 1
+    end = opening + 1
+    while end < len(source) and depth:
+        depth += (source[end] == "{") - (source[end] == "}")
+        end += 1
+    return end if depth == 0 else -1
+
+
+def _find_test_body_opening(source: str, start: int) -> int:
+    parentheses = brackets = nested_braces = 0
+    for index in range(start, len(source)):
+        char = source[index]
+        if char == "(":
+            parentheses += 1
+        elif char == ")":
+            parentheses = max(0, parentheses - 1)
+        elif char == "[":
+            brackets += 1
+        elif char == "]":
+            brackets = max(0, brackets - 1)
+        elif char == "{":
+            if parentheses or brackets or nested_braces:
+                nested_braces += 1
+            else:
+                return index
+        elif char == "}" and nested_braces:
+            nested_braces -= 1
+    return -1
+
+
 def _java_test_methods(source: str) -> dict[str, _METHOD_SUMMARY]:
     code = _mask_non_code(source)
+    type_scopes = []
+    for declaration in _JAVA_TYPE_DECLARATION.finditer(code):
+        opening = declaration.end() - 1
+        end = _find_matching_brace(code, opening)
+        if end >= 0:
+            type_scopes.append((opening, end, declaration.group(1)))
+
     ranges: list[tuple[str, int, int, int]] = []
     for annotation in _JAVA_TEST_ANNOTATION.finditer(code):
-        opening = code.find("{", annotation.end())
+        opening = _find_test_body_opening(code, annotation.end())
         if opening < 0:
             continue
         signature = code[annotation.end():opening]
         method = _JAVA_TEST_METHOD.search(signature)
         if method is None:
             continue
-        depth = 1
-        end = opening + 1
-        while end < len(code) and depth:
-            depth += (code[end] == "{") - (code[end] == "}")
-            end += 1
-        if depth == 0:
-            ranges.append((method.group(1), annotation.start(), end, opening + 1))
+        end = _find_matching_brace(code, opening)
+        if end < 0:
+            continue
+        enclosing_types = [
+            (scope_start, name)
+            for scope_start, scope_end, name in type_scopes
+            if scope_start < annotation.start() < scope_end
+        ]
+        type_name = ".".join(name for _, name in sorted(enclosing_types))
+        parameters = " ".join(method.group("parameters").split())
+        identity = f"{type_name}#{method.group('name')}({parameters})"
+        ranges.append((identity, annotation.start(), end, opening + 1))
 
     methods: dict[str, _METHOD_SUMMARY] = {}
     for name, start, end, body_start in ranges:

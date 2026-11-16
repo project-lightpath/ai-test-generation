@@ -103,6 +103,24 @@ class GenerationRecord:
             "attempts": [dict(attempt) for attempt in self.attempts],
         }
 
+    def candidate_for_attempt(self, attempt_number: int) -> PatchCandidate:
+        """Reconstruct an integrity-checked patch candidate from stored artifacts."""
+        validate_generation_record(self)
+        attempt = next(
+            (item for item in self.attempts if item.get("attempt") == attempt_number),
+            None,
+        )
+        if attempt is None:
+            raise ValueError(f"generation attempt {attempt_number} is unavailable")
+        artifacts = {
+            item["artifact"]["artifact_id"]: item["content"]
+            for item in self.artifacts
+        }
+        patch = artifacts[attempt["patch_artifact_id"]]
+        materialized = artifacts[attempt["materialized_artifact_id"]]
+        base = artifacts[attempt["base_artifact_id"]]
+        return PatchCandidate(patch, materialized, base)
+
     @classmethod
     def from_storage_document(
         cls, document: Mapping[str, object], *, duplicate: bool = False
@@ -156,6 +174,18 @@ class GenerationService:
             if is_resume:
                 if state.revision != request.expected_revision + 1:
                     raise StaleEventError("in-progress generation revision no longer matches request")
+                start_event_id = f"{request.generation_id}-started"
+                start_event = next(
+                    (
+                        event for event in self._store.events(request.run_id)
+                        if event.event_id == start_event_id
+                    ),
+                    None,
+                )
+                if start_event is None:
+                    raise GenerationConflictError("in-progress generation is missing its start event")
+                if not digests_equal(start_event.generation_request_digest, request.digest()):
+                    raise GenerationConflictError("generation identity is bound to different request inputs")
             elif state.revision != request.expected_revision:
                 raise StaleEventError(
                     f"event expects revision {request.expected_revision}, current revision is {state.revision}"
@@ -180,6 +210,7 @@ class GenerationService:
                 request.expected_revision,
                 request.created_at,
                 generation_id=request.generation_id,
+                generation_request_digest=request.digest(),
                 plan_id=request.plan_id,
             )
             if not is_resume:
@@ -220,7 +251,11 @@ class GenerationService:
                     item["content"] for item in artifacts
                     if item["artifact"]["artifact_id"] == attempts[-1]["materialized_artifact_id"]
                 )
-                final_candidate = PatchCandidate(final_patch, final_files)
+                final_base_files = next(
+                    item["content"] for item in artifacts
+                    if item["artifact"]["artifact_id"] == attempts[-1]["base_artifact_id"]
+                )
+                final_candidate = PatchCandidate(final_patch, final_files, final_base_files)
                 final_patch_digest = str(attempts[-1]["output_digest"])
                 final_materialized_digest = compute_materialized_digest(final_files)
 
@@ -275,12 +310,18 @@ class GenerationService:
                     "application/vnd.atg.materialized-tests+json",
                     dict(candidate.materialized_files),
                 )
+                base_artifact = _artifact(
+                    f"artifact-{request.generation_id}-base-{attempt_number}",
+                    "application/vnd.atg.base-files+json",
+                    dict(candidate.base_files),
+                )
                 attempt = {
                     "attempt": attempt_number,
                     "input_digest": input_digest,
                     "output_digest": patch_digest,
                     "patch_artifact_id": patch_artifact["artifact"]["artifact_id"],
                     "materialized_artifact_id": materialized_artifact["artifact"]["artifact_id"],
+                    "base_artifact_id": base_artifact["artifact"]["artifact_id"],
                     "changed_files": list(changed_files),
                     **provenance,
                     "status": status,
@@ -291,10 +332,10 @@ class GenerationService:
                     request.run_id,
                     request.digest(),
                     attempt,
-                    (patch_artifact, materialized_artifact),
+                    (patch_artifact, materialized_artifact, base_artifact),
                 )
                 attempts.append(attempt)
-                artifacts.extend((patch_artifact, materialized_artifact))
+                artifacts.extend((patch_artifact, materialized_artifact, base_artifact))
                 final_patch_digest = patch_digest
                 final_materialized_digest = materialized_digest
                 final_status = status
@@ -386,6 +427,7 @@ class GenerationService:
                     "materialized_test_digest": final_materialized_digest,
                     "patch_artifact_id": final_attempt["patch_artifact_id"],
                     "materialized_artifact_id": final_attempt["materialized_artifact_id"],
+                    "base_artifact_id": final_attempt["base_artifact_id"],
                 }
             record = GenerationRecord(
                 request.digest(), manifest, tuple(artifacts), tuple(attempts)

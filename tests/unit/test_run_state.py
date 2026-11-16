@@ -16,6 +16,8 @@ from atg.domain.run_state import (  # noqa: E402
 
 def event(run_id, event_id, revision, event_type, **kwargs):
     occurred_at = kwargs.pop("occurred_at", f"2026-11-03T17:00:{revision:02d}Z")
+    if event_type == "generation_started":
+        kwargs.setdefault("generation_request_digest", "sha256:" + "a" * 64)
     return RunEvent(
         event_id=event_id,
         run_id=run_id,

@@ -73,6 +73,58 @@ class GenerationGateTests(unittest.TestCase):
         self.assertEqual(checks["assertion"], "pass")
         self.assertEqual(checks["target"], "pass")
 
+    def test_parameterized_annotation_arguments_do_not_hide_java_test_method(self):
+        source = '''class GeneratedTests {
+    @ParameterizedTest
+    @CsvSource({"first, 1", "second, 2"})
+    void targetBehavior(String input, int expected) {
+        assertEquals(expected, subject.target_handler(input));
+    }
+}
+'''
+        status, checks = evaluate(source, path="tests/GeneratedTests.java")
+        self.assertEqual(status, "verified")
+        self.assertEqual(checks["assertion"], "pass")
+        self.assertEqual(checks["target"], "pass")
+
+    def test_nested_java_tests_with_same_name_are_checked_independently(self):
+        before = '''class GeneratedTests {
+    @Nested class First {
+        @Test void returnsExpected() {
+            subject.target_handler();
+            assertEquals(1, actual);
+        }
+    }
+    @Nested class Second {
+        @Test void returnsExpected() {
+            subject.target_handler();
+            assertTrue(subject.isValid());
+        }
+    }
+}
+'''
+        after = '''class GeneratedTests {
+    @Nested class First {
+        @Test void returnsExpected() {
+            subject.target_handler();
+        }
+    }
+    @Nested class Second {
+        @Test void returnsExpected() {
+            subject.target_handler();
+            assertTrue(subject.isValid());
+        }
+    }
+}
+'''
+        status, checks = evaluate(
+            after,
+            path="tests/GeneratedTests.java",
+            base_files={"tests/GeneratedTests.java": before},
+        )
+        self.assertEqual(status, "rejected")
+        self.assertEqual(checks["assertion"], "fail")
+
     def test_unknown_language_reports_inconclusive_gate_support(self):
         status, checks = evaluate(
             'test("target_handler", () => expect(target_handler()).toBe(1));',
