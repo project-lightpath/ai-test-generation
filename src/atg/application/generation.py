@@ -269,7 +269,6 @@ class GenerationService:
                 raise GenerationConflictError("generation produced no candidate")
             if final_status != "verified":
                 final_status = "inconclusive" if len(attempts) == self.MAX_ATTEMPTS else "rejected"
-            changed_files = list(final_candidate.materialized_files)
             manifest = {
                 "contract": "atg.generation",
                 "version": "1.0",
@@ -284,7 +283,6 @@ class GenerationService:
                 "candidate": dict(request.candidate),
                 "patch_digest": final_patch_digest,
                 "materialized_test_digest": final_materialized_digest,
-                "changed_files": changed_files,
                 "status": final_status,
                 "created_at": request.created_at,
                 "model": dict(request.model),
@@ -300,6 +298,14 @@ class GenerationService:
                     }
                 ],
             }
+            try:
+                final_changed_files = validate_candidate_paths(
+                    final_candidate.patch_text, final_candidate.materialized_files, allowed_paths
+                )
+            except ValueError:
+                final_changed_files = ()
+            if final_changed_files:
+                manifest["changed_files"] = list(final_changed_files)
             record = GenerationRecord(
                 request.digest(), manifest, tuple(artifacts), tuple(attempts)
             )

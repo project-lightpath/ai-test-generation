@@ -1,6 +1,5 @@
 import json
 import pathlib
-import sqlite3
 import sys
 import unittest
 from tempfile import TemporaryDirectory
@@ -121,12 +120,32 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertIsNone(store.get_run("run-1").completed_generation_id)
             store.close()
 
+    def test_generation_rejects_patch_materialization_path_mismatch(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            valid = candidate()
+            mismatch = PatchCandidate(
+                valid.patch_text,
+                {"tests/test_different.py": next(iter(valid.materialized_files.values()))},
+            )
+            record = GenerationService(store).generate(request(
+                store.get_run("run-1"), generation_id="generation-mismatch", first=mismatch
+            ))
+            self.assertEqual(record.manifest["status"], "rejected")
+            self.assertEqual(record.attempts[0]["checks"][0]["status"], "fail")
+            store.close()
+
     def test_generation_uses_deterministic_collection_and_assertion_gates(self):
         cases = {
             "no-assertion": "def test_target_handler():\n    # target-handler\n    value = 1\n",
             "no-collection": "# target-handler\nassert 2 == 2\n",
             "weakened": "def test_target_handler():\n    # target-handler\n    assert True\n",
             "wrong-target": "def test_other():\n    assert 2 == 2\n",
+            "syntax": "def test_target_handler(:\n    # target-handler\n    assert value == 1\n",
+            "format": "def test_target_handler(): \n    # target-handler\n    assert value == 1\n",
+            "compile": "def test_target_handler():\n    # target-handler COMPILE_ERROR\n    assert value == 1\n",
         }
         for generation_id, content in cases.items():
             with self.subTest(generation_id=generation_id), TemporaryDirectory() as directory:
@@ -153,6 +172,35 @@ class GenerationServiceTests(unittest.TestCase):
             self.assertEqual(record.attempts[0]["model"], MODEL)
             self.assertEqual(record.attempts[0]["tool"], TOOL)
             self.assertEqual(record.attempts[0]["worker"], WORKER)
+            store.close()
+
+    def test_attempt_is_persisted_before_next_repair(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            bad = candidate("def test_target_handler():\n    # target-handler\n    value = 1\n")
+            good = candidate()
+
+            class CheckingGenerator:
+                def generate(self, generation_request, attempt, feedback):
+                    if attempt == 1:
+                        return bad
+                    count = store._connection.execute(
+                        "SELECT COUNT(*) AS count FROM generation_attempts WHERE generation_id = ?",
+                        (generation_request.generation_id,),
+                    ).fetchone()["count"]
+                    self.assertEqual(count, 1)
+                    return good if attempt == 2 else None
+
+                def assertEqual(self, left, right):
+                    if left != right:
+                        raise AssertionError(f"{left!r} != {right!r}")
+
+            record = GenerationService(store, generator=CheckingGenerator()).generate(
+                request(store.get_run("run-1"), first=bad, repairs=(good,))
+            )
+            self.assertEqual(record.manifest["status"], "verified")
             store.close()
 
     def test_three_failed_attempts_are_inconclusive(self):
@@ -216,6 +264,25 @@ class GenerationServiceTests(unittest.TestCase):
             store._connection.execute(
                 "UPDATE generations SET bundle_json = ? WHERE generation_id = 'generation-1'",
                 (json.dumps(bundle, sort_keys=True),),
+            )
+            with self.assertRaises(ContractValidationError):
+                store.get_generation("generation-1")
+            store.close()
+
+    def test_persisted_attempt_tampering_fails_closed(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            GenerationService(store).generate(request(store.get_run("run-1")))
+            row = store._connection.execute(
+                "SELECT document_json FROM generation_attempts WHERE generation_id = 'generation-1' AND attempt = 1"
+            ).fetchone()
+            attempt = json.loads(row["document_json"])
+            attempt["output_digest"] = "sha256:" + "f" * 64
+            store._connection.execute(
+                "UPDATE generation_attempts SET document_json = ? WHERE generation_id = 'generation-1' AND attempt = 1",
+                (json.dumps(attempt, sort_keys=True),),
             )
             with self.assertRaises(ContractValidationError):
                 store.get_generation("generation-1")

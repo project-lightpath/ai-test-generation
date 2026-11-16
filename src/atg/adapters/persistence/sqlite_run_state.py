@@ -319,6 +319,10 @@ class SQLiteRunStateStore:
                 "SELECT generation_id, run_id, plan_id, request_digest, bundle_json FROM generations WHERE generation_id = ?",
                 (generation_id,),
             ).fetchone()
+            attempt_rows = self._connection.execute(
+                "SELECT request_digest, document_json, artifacts_json FROM generation_attempts WHERE generation_id = ? ORDER BY attempt",
+                (generation_id,),
+            ).fetchall()
         if row is None:
             return None
         try:
@@ -330,6 +334,18 @@ class SQLiteRunStateStore:
                 or row["request_digest"] != record.request_digest
             ):
                 raise ContractValidationError("persisted generation row metadata differs from bundle")
+            persisted_attempts = tuple(json.loads(item["document_json"]) for item in attempt_rows)
+            persisted_artifacts = tuple(
+                artifact
+                for item in attempt_rows
+                for artifact in json.loads(item["artifacts_json"])
+            )
+            if (
+                any(item["request_digest"] != record.request_digest for item in attempt_rows)
+                or persisted_attempts != record.attempts
+                or persisted_artifacts != record.artifacts
+            ):
+                raise ContractValidationError("persisted generation attempts differ from bundle")
             return record
         except ContractValidationError:
             raise

@@ -4,7 +4,7 @@
   "title": "ATG generated test change",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "generation_id", "run_id", "plan_id", "plan_revision", "plan_artifact_digest", "plan_checkpoint_id", "plan_decision_id", "base", "candidate", "status", "created_at"],
+  "required": ["contract", "version", "generation_id", "run_id", "plan_id", "plan_revision", "plan_artifact_digest", "plan_checkpoint_id", "plan_decision_id", "base", "candidate", "patch_digest", "materialized_test_digest", "status", "created_at", "model", "tool", "worker", "attempts", "artifacts"],
   "properties": {
     "contract": { "const": "atg.generation" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
@@ -18,7 +18,13 @@
     "base": { "$ref": "common.schema.json#/$defs/identity" },
     "candidate": { "$ref": "common.schema.json#/$defs/identity" },
     "patch_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
-    "changed_files": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "changed_files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": { "type": "string", "pattern": "^(src/test|tests)/(?!.*\\.\\.)[A-Za-z0-9._/-]+\\.(java|py|kt|ts|js|go)$" },
+      "uniqueItems": true
+    },
     "status": { "enum": ["generated", "verified", "rejected", "inconclusive"] },
     "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
     "model": { "$ref": "common.schema.json#/$defs/identity" },
@@ -66,7 +72,7 @@
   "allOf": [
     {
       "if": { "properties": { "status": { "enum": ["generated", "verified"] } } },
-      "then": { "required": ["patch_digest", "changed_files", "materialized_test_digest", "model", "tool", "worker", "attempts", "artifacts"] }
+      "then": { "required": ["changed_files"] }
     }
   ]
 }
