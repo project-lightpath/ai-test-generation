@@ -13,8 +13,10 @@ from atg.application.analysis import AnalysisService
 from atg.application.generation import (
     GenerationAdapterUnavailableError,
     GenerationConflictError,
+    GenerationRecord,
     GenerationRequest,
     GenerationService,
+    validate_generation_record,
 )
 from atg.application.planning import PlanningRequest, PlanningService
 from atg.domain.schema_validation import ContractValidationError
@@ -149,17 +151,54 @@ class GenerationServiceTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             create_repository(root)
-            store, _ = prepare_coding_store(root)
+            store, plan = prepare_coding_store(root)
             req = request(store.get_run("run-1"))
             record = generation_service(store, (generated(candidate()),)).generate(req)
             self.assertEqual(record.manifest["status"], "verified")
             self.assertEqual(len(record.artifacts), 2)
             self.assertEqual(record.artifacts[0]["content"], candidate().patch_text)
+            handoff = record.manifest["materialization_handoff"]
+            self.assertEqual(handoff["status"], "ready")
+            self.assertEqual(handoff["run_id"], record.manifest["run_id"])
+            self.assertEqual(handoff["allowed_paths"], plan.manifest["allowed_paths"])
+            self.assertEqual(handoff["changed_files"], ["tests/test_generated.py"])
+            self.assertEqual(handoff["patch_digest"], record.manifest["patch_digest"])
+            self.assertEqual(
+                handoff["materialized_test_digest"],
+                record.manifest["materialized_test_digest"],
+            )
+            self.assertEqual(
+                handoff["patch_artifact_id"], record.attempts[-1]["patch_artifact_id"]
+            )
+            self.assertEqual(
+                handoff["materialized_artifact_id"],
+                record.attempts[-1]["materialized_artifact_id"],
+            )
+            self.assertEqual(
+                [item["subject"] for item in handoff["subjects"]], [BASE, CANDIDATE]
+            )
             persisted = store.get_generation("generation-1")
             self.assertEqual(persisted.manifest, record.manifest)
             state = store.get_run("run-1")
             self.assertEqual(state.completed_generation_id, "generation-1")
             self.assertFalse(state.generation_in_progress)
+            store.close()
+
+    def test_materialization_handoff_tampering_fails_integrity_validation(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, plan = prepare_coding_store(root)
+            record = generation_service(store, (generated(candidate()),)).generate(
+                request(store.get_run("run-1"))
+            )
+            manifest = json.loads(json.dumps(record.manifest))
+            manifest["materialization_handoff"]["changed_files"] = ["src/main/App.java"]
+            tampered = GenerationRecord(
+                record.request_digest, manifest, record.artifacts, record.attempts
+            )
+            with self.assertRaises(ContractValidationError):
+                validate_generation_record(tampered, plan.manifest)
             store.close()
 
     def test_generation_rejects_unapproved_path_without_completion(self):
@@ -217,7 +256,7 @@ class GenerationServiceTests(unittest.TestCase):
             create_repository(root)
             store, _ = prepare_coding_store(root)
             path = "tests/GeneratedTest.java"
-            content = "class GeneratedTest { // target-handler\n @Test void target_handler() { assertTrue(subject.isValid()); } }\n"
+            content = "class GeneratedTest { @Test void testBehavior() { subject.target_handler(); assertTrue(subject.isValid()); } }\n"
             java_candidate = PatchCandidate(canonical_patch({}, {path: content}), {path: content})
             result = GenerationService(
                 store, generator=FixtureGenerationAdapter((generated(java_candidate),))
@@ -226,6 +265,10 @@ class GenerationServiceTests(unittest.TestCase):
             checks = {item["name"]: item["status"] for item in result.attempts[0]["checks"]}
             self.assertEqual(checks["compile"], "not_supported")
             self.assertEqual(checks["collection"], "not_supported")
+            limitation_codes = {item["code"] for item in result.manifest["limitations"]}
+            self.assertIn("unsupported-compile", limitation_codes)
+            self.assertIn("unsupported-collection", limitation_codes)
+            self.assertIn("execution-not-performed", limitation_codes)
             store.close()
 
     def test_unconfigured_service_does_not_start_generation(self):

@@ -98,6 +98,14 @@ class GenerationHTTPTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(doc["manifest"]["generation_id"], "gen-http-1")
         self.assertEqual(doc["manifest"]["status"], "verified")
+        handoff = doc["manifest"]["materialization_handoff"]
+        self.assertEqual(handoff["generation_id"], "gen-http-1")
+        self.assertEqual(handoff["plan_id"], "plan-http-gen")
+        self.assertEqual(handoff["status"], "ready")
+        self.assertEqual(
+            handoff["patch_artifact_id"],
+            doc["manifest"]["attempts"][-1]["patch_artifact_id"],
+        )
         self.assertEqual(self.validator.calls, 1)
         self.assertEqual(self.generator.calls, 1)
         status, duplicate = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-key"})

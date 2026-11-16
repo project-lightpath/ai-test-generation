@@ -196,6 +196,44 @@ def validate_generation_manifest(
         if any(manifest.get(field) != attempts[-1].get(field) for field in provenance_fields):
             raise ValueError("generation-level invocation provenance differs from final attempt")
 
+    handoff = manifest.get("materialization_handoff")
+    if handoff is not None:
+        if not isinstance(handoff, Mapping) or manifest.get("status") not in {"generated", "verified"}:
+            raise ValueError("materialization handoff requires a successful generation")
+        if handoff.get("status") != "ready":
+            raise ValueError("materialization handoff status is invalid")
+        for field in (
+            "generation_id", "run_id", "plan_id", "plan_revision", "plan_artifact_digest",
+            "plan_checkpoint_id", "plan_decision_id",
+        ):
+            if handoff.get(field) != manifest.get(field):
+                raise ValueError(f"materialization handoff {field} differs from generation")
+        if (
+            not digests_equal(handoff.get("patch_digest"), manifest.get("patch_digest"))
+            or not digests_equal(
+                handoff.get("materialized_test_digest"),
+                manifest.get("materialized_test_digest"),
+            )
+        ):
+            raise ValueError("materialization handoff digests differ from generation")
+        allowed_paths = tuple(handoff.get("allowed_paths", []))
+        changed_files = validate_changed_files(handoff.get("changed_files", []), allowed_paths)
+        if tuple(manifest.get("changed_files", [])) != changed_files:
+            raise ValueError("materialization handoff paths differ from generation")
+        if plan_manifest is not None and allowed_paths != tuple(plan_manifest.get("allowed_paths", [])):
+            raise ValueError("materialization handoff paths differ from approved plan")
+        expected_subjects = [
+            {"subject": manifest.get("base"), "test_digest": manifest.get("materialized_test_digest")},
+            {"subject": manifest.get("candidate"), "test_digest": manifest.get("materialized_test_digest")},
+        ]
+        if list(handoff.get("subjects", [])) != expected_subjects:
+            raise ValueError("materialization handoff subjects differ from generation")
+        if attempts and (
+            handoff.get("patch_artifact_id") != attempts[-1].get("patch_artifact_id")
+            or handoff.get("materialized_artifact_id") != attempts[-1].get("materialized_artifact_id")
+        ):
+            raise ValueError("materialization handoff artifact references differ from final attempt")
+
 
 def validate_artifact_bundle(
     manifest: Mapping[str, object], artifacts: tuple[Mapping[str, object], ...]

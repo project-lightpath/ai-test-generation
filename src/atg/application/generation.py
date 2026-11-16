@@ -317,6 +317,21 @@ class GenerationService:
                     if final_status == "inconclusive" or len(attempts) == self.MAX_ATTEMPTS
                     else "rejected"
                 )
+            final_checks = attempts[-1].get("checks", [])
+            limitations = [
+                {
+                    "code": f"unsupported-{check['name']}",
+                    "description": check.get("detail", f"{check['name']} validation is not configured."),
+                    "severity": "warning",
+                }
+                for check in final_checks
+                if check.get("status") == "not_supported"
+            ]
+            limitations.append({
+                "code": "execution-not-performed",
+                "description": "Generated tests are not executed against base or candidate subjects by 5047; execution evidence belongs to 5048.",
+                "severity": "info",
+            })
             manifest = {
                 "contract": "atg.generation",
                 "version": "1.0",
@@ -346,16 +361,32 @@ class GenerationService:
                 },
                 "attempts": attempts,
                 "artifacts": [artifact["artifact"] for artifact in artifacts],
-                "limitations": [
-                    {
-                        "code": "development-static-validation",
-                        "description": "Static local prechecks do not prove live framework compilation or collection.",
-                        "severity": "warning",
-                    }
-                ],
+                "limitations": limitations,
             }
             if changed_files:
                 manifest["changed_files"] = list(changed_files)
+            if final_status in {"generated", "verified"}:
+                final_attempt = attempts[-1]
+                manifest["materialization_handoff"] = {
+                    "status": "ready",
+                    "generation_id": request.generation_id,
+                    "run_id": request.run_id,
+                    "plan_id": request.plan_id,
+                    "plan_revision": plan.manifest["plan_revision"],
+                    "plan_artifact_digest": state.active_plan_artifact_digest,
+                    "plan_checkpoint_id": checkpoint["checkpoint_id"],
+                    "plan_decision_id": checkpoint["decision"]["decision_id"],
+                    "subjects": [
+                        {"subject": dict(request.base), "test_digest": final_materialized_digest},
+                        {"subject": dict(request.candidate), "test_digest": final_materialized_digest},
+                    ],
+                    "allowed_paths": list(allowed_paths),
+                    "changed_files": list(changed_files),
+                    "patch_digest": final_patch_digest,
+                    "materialized_test_digest": final_materialized_digest,
+                    "patch_artifact_id": final_attempt["patch_artifact_id"],
+                    "materialized_artifact_id": final_attempt["materialized_artifact_id"],
+                }
             record = GenerationRecord(
                 request.digest(), manifest, tuple(artifacts), tuple(attempts)
             )

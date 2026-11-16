@@ -1,6 +1,6 @@
 # FLPATH-5047: Generate Bounded Native Tests with Exact Patch Provenance
 
-Status: Local adapter-neutral Code boundary implemented; integration handoff pending
+Status: Local adapter-neutral Code boundary implemented; target-profile checks depend on upstream fixture/profile
 Parent: FLPATH-5030 AI Test Generation MVP
 Depends on: FLPATH-5046 (approved plan + digest-bound checkpoint)
 Upstream: FLPATH-4995/5002/5012 (fixture/profile/facts) consumed via neutral ports; NOT owned here
@@ -94,14 +94,15 @@ All deterministic, no model override:
 3. **Syntax/format/compile/collection**: delegated to `ValidationPort.validate(candidate)`. The default local adapter can parse and compile Python source and check basic formatting; it does not claim framework collection, Java parsing, or compilation. Unsupported checks are `not_supported`, producing an explicit `inconclusive` result. A profile-backed adapter supplied after the 5050/fixture decisions must provide real format, compile, and collection checks for the target framework; test-runner execution remains 5048.
 
 4. **Assertion-quality gate** (`src/atg/gates/generation.py`):
-   - Collector reports zero tests -> `rejected: no tests collected`; no configured collector -> `inconclusive`
-   - No `assert*` / `assertThat` / `assertEquals` in added lines -> `rejected: no meaningful assertion`
-   - Weakened assertion (e.g., `assertTrue(true)`, removed assertion vs baseline) -> `rejected: weakened assertion`
-   - Wrong target (test does not reference `plan.objective_refs` symbols) -> `rejected`
+    - Collector reports zero tests -> `rejected: no tests collected`; no configured collector -> `inconclusive`
+    - Python AST and Java/Kotlin test-method checks ignore comments and string literals; other languages report unsupported gate status
+    - New tests require a non-trivial assertion; reduced assertion counts, tautologies, and recognized weakening from the supplied base are rejected
+    - These AST/lexical checks are heuristics, not proof of semantic assertion strength; profile-backed validation and 5048 execution remain necessary
+    - Wrong target (test body does not reference an objective target symbol) -> `rejected`
 
 5. **Bounded repair**: `max_attempts = 3` (constant, not model-controlled). Each attempt records input/output digests, model, tool, worker, checks, and exact artifact IDs. Every attempt is committed to `generation_attempts` before requesting the next candidate. Exhaustion -> `status=inconclusive`, not silent pass.
 
-6. **Materialized-test equivalence**: the canonical sorted path-to-content map is digested as `materialized_test_digest` and bound to both immutable subject identities. Exact contents are stored as an artifact. `FilesystemPatchMaterializer` applies only canonical patches into configured workspaces with descriptor-relative, no-follow path handling, base-content checks, atomic writes, and post-write digest verification.
+6. **Materialized-test equivalence and handoff**: the canonical sorted path-to-content map is digested as `materialized_test_digest` and bound to both immutable subject identities. Exact contents are stored as an artifact. A verified generation persists `materialization_handoff` with subject identities, approved roots, changed paths, digests, and final artifact IDs. 5048 resolves each subject to an isolated workspace and consumes this handoff. `FilesystemPatchMaterializer` applies only canonical patches into configured workspaces with descriptor-relative, no-follow path handling, base-content checks, atomic writes, and post-write digest verification; 5047 does not write into either repository subject.
 
 ## 6. Persistence
 
@@ -225,16 +226,21 @@ Before treating 5047 as locally complete:
    terminal status). Keep canonical ATG records authoritative and do not make
    Tekton mandatory or select it by implementing the projection.
 4. **Complete:** generation starts visibly before candidate output; attempts
-   persist sequentially and resume after restart; request keys and material
-   inputs are bound; per-subject test digests are included.
+    persist sequentially and resume after restart; request keys and material
+    inputs are bound; per-subject test digests and an integrity-checked
+    materialization handoff are included for verified results.
 5. **Complete for the provider-neutral boundary:** isolated workspace,
    restart/replay, path-escape/symlink, digest-equivalence, and adapter-injection
    tests pass. The default validator deliberately returns `inconclusive` for
    unsupported Java/framework compile or collection checks instead of claiming
    success.
 
-The remaining 5047 implementation after the 5050 decision is to add the selected
-generator adapter and target-profile validation adapter behind these ports.
+The remaining integration after the 5050 decision is to add the selected
+generator adapter and consume the upstream target-profile validation adapter
+behind these ports. No authoritative Java 21/Quarkus fixture or approved
+validator command profile is currently published in the checked-out sources;
+the SSC Java 17/Spring profile is demo-only. 5047 therefore keeps unsupported
+Java/framework checks inconclusive rather than inventing a profile.
 5050 can compare whole-stack harness options against the same `GenerationPort`,
 `ValidationPort`, approved plan, deterministic fixture, and persisted result.
 The evaluation should record candidate name/version/configuration/endpoint,

@@ -139,6 +139,42 @@ class GenerationMaterializerTests(unittest.TestCase):
         self.assertEqual(projection["RUN_REF"], "taskrun-1")
         self.assertIsNone(projection["PR_URL"])
 
+    def test_compatibility_projection_rejects_wrong_subject(self):
+        result = MaterializationResult(
+            workspace_identity={"kind": "git-tree", "id": "wrong-subject"},
+            changed_files=("tests/test_generated.py",),
+            allowed_paths=("tests/",),
+            patch_digest="sha256:" + "a" * 64,
+            materialized_test_digest="sha256:" + "b" * 64,
+        )
+        record = type("Record", (), {"manifest": {
+            "status": "verified",
+            "base": {"kind": "git-tree", "id": "base"},
+            "candidate": {"kind": "git-tree", "id": "candidate"},
+            "patch_digest": result.patch_digest,
+            "materialized_test_digest": result.materialized_test_digest,
+        }})()
+        with self.assertRaisesRegex(ValueError, "workspace does not match"):
+            to_ssc_tekton_compatibility(record, result)
+
+    def test_compatibility_projection_rejects_digest_mismatch(self):
+        result = MaterializationResult(
+            workspace_identity={"kind": "git-tree", "id": "candidate"},
+            changed_files=("tests/test_generated.py",),
+            allowed_paths=("tests/",),
+            patch_digest="sha256:" + "a" * 64,
+            materialized_test_digest="sha256:" + "b" * 64,
+        )
+        record = type("Record", (), {"manifest": {
+            "status": "verified",
+            "base": {"kind": "git-tree", "id": "base"},
+            "candidate": dict(result.workspace_identity),
+            "patch_digest": "sha256:" + "c" * 64,
+            "materialized_test_digest": result.materialized_test_digest,
+        }})()
+        with self.assertRaisesRegex(ValueError, "differs from canonical generation"):
+            to_ssc_tekton_compatibility(record, result)
+
 
 if __name__ == "__main__":
     unittest.main()
