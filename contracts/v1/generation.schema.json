@@ -63,7 +63,7 @@
           "model": { "$ref": "common.schema.json#/$defs/identity" },
           "tool": { "$ref": "common.schema.json#/$defs/identity" },
           "worker": { "$ref": "common.schema.json#/$defs/identity" },
-          "status": { "enum": ["verified", "rejected"] },
+          "status": { "enum": ["verified", "rejected", "inconclusive"] },
           "checks": {
             "type": "array",
             "minItems": 1,
@@ -73,7 +73,7 @@
               "required": ["name", "status"],
               "properties": {
                 "name": { "enum": ["approved_path", "syntax", "format", "compile", "collection", "assertion", "target"] },
-                "status": { "enum": ["pass", "fail"] },
+                "status": { "enum": ["pass", "fail", "not_supported"] },
                 "detail": { "type": "string", "minLength": 1 }
               }
             }

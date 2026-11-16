@@ -1,4 +1,5 @@
 import json
+import ast
 import pathlib
 import sys
 import unittest
@@ -17,6 +18,7 @@ from atg.application.generation import (
 from atg.application.planning import PlanningRequest, PlanningService
 from atg.domain.schema_validation import ContractValidationError
 from atg.domain.generation import canonical_patch
+from atg.ports.generation import ValidationResult
 from atg.domain.run_state import RunEvent
 from atg.ports.generation import PatchCandidate
 from tests.unit.test_analysis import (
@@ -33,6 +35,28 @@ CANDIDATE = {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}
 MODEL = {"kind": "model", "id": "model-alias", "version": "1"}
 TOOL = {"kind": "generation-tool", "id": "bounded-generator", "version": "1"}
 WORKER = {"kind": "worker", "id": "worker-1", "version": "1"}
+
+
+class FixtureValidationAdapter:
+    """Test-only profile that supplies deterministic successful tool results."""
+
+    def validate(self, patch_candidate):
+        content = "\n".join(patch_candidate.materialized_files.values())
+        syntax_ok = "SYNTAX_ERROR" not in content
+        try:
+            ast.parse(content)
+        except SyntaxError:
+            syntax_ok = False
+        return ValidationResult(
+            syntax_ok=syntax_ok,
+            format_ok=not any(line != line.rstrip() or "\t" in line for line in content.splitlines()),
+            compile_ok="COMPILE_ERROR" not in content,
+            collected=content.count("def test_") + content.count("@Test"),
+        )
+
+
+def generation_service(store, **kwargs):
+    return GenerationService(store, validator=FixtureValidationAdapter(), **kwargs)
 
 
 def prepare_coding_store(root: pathlib.Path, database=":memory:"):
@@ -99,7 +123,7 @@ class GenerationServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store, _ = prepare_coding_store(root)
-            record = GenerationService(store).generate(request(store.get_run("run-1")))
+            record = generation_service(store).generate(request(store.get_run("run-1")))
             self.assertEqual(record.manifest["status"], "verified")
             self.assertEqual(len(record.artifacts), 2)
             self.assertEqual(record.artifacts[0]["content"], request(store.get_run("run-1")).patch_text)
@@ -116,7 +140,7 @@ class GenerationServiceTests(unittest.TestCase):
             create_repository(root)
             store, _ = prepare_coding_store(root)
             invalid = candidate(path="src/main/java/App.java")
-            record = GenerationService(store).generate(request(store.get_run("run-1"), first=invalid))
+            record = generation_service(store).generate(request(store.get_run("run-1"), first=invalid))
             self.assertEqual(record.manifest["status"], "rejected")
             self.assertIsNone(store.get_run("run-1").completed_generation_id)
             store.close()
@@ -131,7 +155,7 @@ class GenerationServiceTests(unittest.TestCase):
                 valid.patch_text,
                 {"tests/test_different.py": next(iter(valid.materialized_files.values()))},
             )
-            record = GenerationService(store).generate(request(
+            record = generation_service(store).generate(request(
                 store.get_run("run-1"), generation_id="generation-mismatch", first=mismatch
             ))
             self.assertEqual(record.manifest["status"], "rejected")
@@ -153,11 +177,28 @@ class GenerationServiceTests(unittest.TestCase):
                 root = pathlib.Path(directory)
                 create_repository(root)
                 store, _ = prepare_coding_store(root)
-                record = GenerationService(store).generate(request(
+                record = generation_service(store).generate(request(
                     store.get_run("run-1"), generation_id, candidate(content)
                 ))
                 self.assertEqual(record.manifest["status"], "rejected")
                 store.close()
+
+    def test_default_validator_does_not_claim_java_compile_or_collection(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            path = "tests/GeneratedTest.java"
+            content = "class GeneratedTest { // target-handler\n @Test void target_handler() { assertTrue(subject.isValid()); } }\n"
+            java_candidate = PatchCandidate(canonical_patch({}, {path: content}), {path: content})
+            result = GenerationService(store).generate(request(
+                store.get_run("run-1"), first=java_candidate
+            ))
+            self.assertEqual(result.manifest["status"], "inconclusive")
+            checks = {item["name"]: item["status"] for item in result.attempts[0]["checks"]}
+            self.assertEqual(checks["compile"], "not_supported")
+            self.assertEqual(checks["collection"], "not_supported")
+            store.close()
 
     def test_generation_repairs_are_bounded_and_attributed(self):
         with TemporaryDirectory() as directory:
@@ -165,7 +206,7 @@ class GenerationServiceTests(unittest.TestCase):
             create_repository(root)
             store, _ = prepare_coding_store(root)
             bad = candidate("def test_target_handler():\n    # target-handler\n    value = 1\n")
-            record = GenerationService(store).generate(request(
+            record = generation_service(store).generate(request(
                 store.get_run("run-1"), first=bad, repairs=(candidate(),)
             ))
             self.assertEqual(record.manifest["status"], "verified")
@@ -198,7 +239,7 @@ class GenerationServiceTests(unittest.TestCase):
                     if left != right:
                         raise AssertionError(f"{left!r} != {right!r}")
 
-            record = GenerationService(store, generator=CheckingGenerator()).generate(
+            record = generation_service(store, generator=CheckingGenerator()).generate(
                 request(store.get_run("run-1"), first=bad, repairs=(good,))
             )
             self.assertEqual(record.manifest["status"], "verified")
@@ -222,11 +263,11 @@ class GenerationServiceTests(unittest.TestCase):
                     raise RuntimeError("simulated process interruption")
 
             with self.assertRaisesRegex(RuntimeError, "interruption"):
-                GenerationService(FailingAttemptStore()).generate(req)
+                generation_service(FailingAttemptStore()).generate(req)
             self.assertTrue(store.get_run("run-1").generation_in_progress)
             self.assertEqual(len(store.get_generation_attempts("generation-1", req.digest())[0]), 1)
 
-            recovered = GenerationService(store).generate(req)
+            recovered = generation_service(store).generate(req)
             self.assertEqual(recovered.manifest["status"], "verified")
             self.assertEqual(len(recovered.attempts), 2)
             self.assertEqual(store.replay("run-1").completed_generation_id, "generation-1")
@@ -238,7 +279,7 @@ class GenerationServiceTests(unittest.TestCase):
             create_repository(root)
             store, _ = prepare_coding_store(root)
             bad = candidate("def test_target_handler():\n    # target-handler\n    value = 1\n")
-            record = GenerationService(store).generate(request(
+            record = generation_service(store).generate(request(
                 store.get_run("run-1"), first=bad, repairs=(bad, bad)
             ))
             self.assertEqual(record.manifest["status"], "inconclusive")
@@ -252,7 +293,7 @@ class GenerationServiceTests(unittest.TestCase):
             create_repository(root)
             store, _ = prepare_coding_store(root)
             state = store.get_run("run-1")
-            service = GenerationService(store)
+            service = generation_service(store)
             first = service.generate(request(state))
             duplicate = service.generate(request(state))
             self.assertTrue(duplicate.duplicate)
@@ -275,7 +316,7 @@ class GenerationServiceTests(unittest.TestCase):
                 (json.dumps(document, sort_keys=True),),
             )
             with self.assertRaises(GenerationConflictError):
-                GenerationService(store).generate(request(store.get_run("run-1")))
+                generation_service(store).generate(request(store.get_run("run-1")))
             store.close()
 
     def test_persisted_generation_tampering_fails_closed(self):
@@ -285,7 +326,7 @@ class GenerationServiceTests(unittest.TestCase):
             create_repository(root)
             database = pathlib.Path(directory) / "generation.sqlite3"
             store, _ = prepare_coding_store(root, database)
-            GenerationService(store).generate(request(store.get_run("run-1")))
+            generation_service(store).generate(request(store.get_run("run-1")))
             bundle = json.loads(store._connection.execute(
                 "SELECT bundle_json FROM generations WHERE generation_id = 'generation-1'"
             ).fetchone()["bundle_json"])
@@ -303,7 +344,7 @@ class GenerationServiceTests(unittest.TestCase):
             root = pathlib.Path(directory)
             create_repository(root)
             store, _ = prepare_coding_store(root)
-            GenerationService(store).generate(request(store.get_run("run-1")))
+            generation_service(store).generate(request(store.get_run("run-1")))
             row = store._connection.execute(
                 "SELECT document_json FROM generation_attempts WHERE generation_id = 'generation-1' AND attempt = 1"
             ).fetchone()

@@ -10,6 +10,7 @@ import ast
 import errno
 import os
 import stat
+import uuid
 from pathlib import Path
 
 from atg.domain.digests import digests_equal
@@ -31,15 +32,15 @@ class RequestGenerationAdapter:
 
 
 class DeterministicValidationAdapter:
-    """Apply local static prechecks without executing repository code."""
+    """Run local syntax checks without pretending to be a framework runner."""
 
     def validate(self, candidate: PatchCandidate) -> ValidationResult:
         """Check syntax markers, formatting, compile markers, and collection."""
         errors: list[str] = []
-        syntax_ok = True
+        syntax_ok: bool | None = True
         format_ok = True
-        compile_ok = True
-        collected = 0
+        compile_ok: bool | None = True
+        unsupported: set[str] = {"collection"}
 
         for path, content in candidate.materialized_files.items():
             lines = content.splitlines()
@@ -49,38 +50,24 @@ class DeterministicValidationAdapter:
             if path.endswith(".py"):
                 try:
                     ast.parse(content)
+                    compile(content, path, "exec")
                 except SyntaxError:
                     syntax_ok = False
                     errors.append(f"syntax check failed: {path}")
-                collected += sum(
-                    1 for line in lines if line.lstrip().startswith("def test_")
-                )
-            elif path.endswith((".java", ".kt")):
-                if (
-                    content.count("{") != content.count("}")
-                    or content.count("(") != content.count(")")
-                    or "SYNTAX_ERROR" in content
-                ):
-                    syntax_ok = False
-                    errors.append(f"syntax check failed: {path}")
-                collected += content.count("@Test")
             else:
-                collected += content.count("test(")
-            if "COMPILE_ERROR" in content:
-                compile_ok = False
-                errors.append(f"compile precheck failed: {path}")
-
-        if collected == 0:
-            errors.append("no tests collected")
+                syntax_ok = None
+                compile_ok = None
+                unsupported.update(("syntax", "compile"))
         return ValidationResult(
             syntax_ok=syntax_ok,
             format_ok=format_ok,
             compile_ok=compile_ok,
-            collected=collected,
+            collected=None,
             errors=tuple(errors),
             limitations=(
-                "Static development prechecks do not prove framework compilation or collection.",
+                "Framework collection is not run by the static development adapter.",
             ),
+            unsupported=tuple(sorted(unsupported)),
         )
 
 
@@ -153,30 +140,40 @@ class FilesystemPatchMaterializer:
                         if exc.errno == errno.ELOOP:
                             raise ValueError(f"workspace target is a symlink: {path}") from exc
                         raise
-                    if existing is None:
-                        if expected_base is not None:
-                            raise ValueError(f"base file missing from workspace: {path}")
-                    elif expected_base is None or existing != expected_base.encode():
-                        raise ValueError(f"workspace base content mismatch: {path}")
-                    file_fd = os.open(
-                        name,
-                        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-                        0o644,
-                        dir_fd=parent_fd,
-                    )
-                    try:
-                        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-                            raise ValueError(f"materialization target is not a regular file: {path}")
-                        os.ftruncate(file_fd, 0)
-                        content = candidate.materialized_files[path].encode()
-                        view = memoryview(content)
-                        while view:
-                            view = view[os.write(file_fd, view):]
-                        os.fsync(file_fd)
-                    finally:
-                        os.close(file_fd)
+                    content = candidate.materialized_files[path].encode()
+                    if existing != content:
+                        if existing is None:
+                            if expected_base is not None:
+                                raise ValueError(f"base file missing from workspace: {path}")
+                        elif expected_base is None or existing != expected_base.encode():
+                            raise ValueError(f"workspace base content mismatch: {path}")
+                        temp_name = f".atg-{uuid.uuid4().hex}.tmp"
+                        file_fd = os.open(
+                            temp_name,
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                            0o600,
+                            dir_fd=parent_fd,
+                        )
+                        try:
+                            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                                raise ValueError("temporary materialization target is not a regular file")
+                            view = memoryview(content)
+                            while view:
+                                view = view[os.write(file_fd, view):]
+                            os.fsync(file_fd)
+                        except Exception:
+                            os.unlink(temp_name, dir_fd=parent_fd)
+                            raise
+                        finally:
+                            os.close(file_fd)
+                        try:
+                            os.replace(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                        except Exception:
+                            os.unlink(temp_name, dir_fd=parent_fd)
+                            raise
+                        os.fsync(parent_fd)
                     actual = _read_relative_file(parent_fd, name, self.MAX_FILE_BYTES)
-                    if actual != candidate.materialized_files[path].encode():
+                    if actual != content:
                         raise ValueError(f"materialized content verification failed: {path}")
                 finally:
                     os.close(parent_fd)
@@ -188,6 +185,7 @@ class FilesystemPatchMaterializer:
         return MaterializationResult(
             workspace_identity=dict(workspace_identity),
             changed_files=changed_files,
+            allowed_paths=allowed_paths,
             patch_digest=expected_patch_digest,
             materialized_test_digest=materialized_digest,
         )

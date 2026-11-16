@@ -29,6 +29,7 @@ class GenerationMaterializerTests(unittest.TestCase):
             )
             self.assertEqual((root / path).read_text(), content)
             self.assertEqual(result.changed_files, (path,))
+            self.assertEqual(result.to_manifest()["allowed_paths"], ["tests/"])
             self.assertEqual(result.materialized_test_digest, compute_materialized_digest({path: content}))
 
     def test_modification_requires_exact_base_content(self):
@@ -120,11 +121,14 @@ class GenerationMaterializerTests(unittest.TestCase):
         result = MaterializationResult(
             workspace_identity={"kind": "git-tree", "id": "candidate"},
             changed_files=("tests/test_generated.py",),
+            allowed_paths=("tests/",),
             patch_digest="sha256:" + "a" * 64,
             materialized_test_digest="sha256:" + "b" * 64,
         )
         record = type("Record", (), {"manifest": {
             "status": "verified",
+            "base": dict(result.workspace_identity),
+            "candidate": {"kind": "git-tree", "id": "base"},
             "patch_digest": result.patch_digest,
             "materialized_test_digest": result.materialized_test_digest,
         }})()

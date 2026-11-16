@@ -23,6 +23,9 @@ def to_ssc_tekton_compatibility(
     if status in {"generated", "verified"}:
         if materialization is None:
             raise ValueError("successful compatibility result requires materialization")
+        subjects = (manifest.get("base"), manifest.get("candidate"))
+        if dict(materialization.workspace_identity) not in subjects:
+            raise ValueError("compatibility workspace does not match a generation subject")
         if (
             not digests_equal(materialization.patch_digest, manifest.get("patch_digest"))
             or not digests_equal(
@@ -31,6 +34,11 @@ def to_ssc_tekton_compatibility(
             )
         ):
             raise ValueError("compatibility materialization differs from canonical generation")
+        if not all(
+            path.startswith(materialization.allowed_paths)
+            for path in materialization.changed_files
+        ):
+            raise ValueError("compatibility output contains a path outside its allowlist")
         tests_added = materialization.changed_files
     for name, value in (("PR_URL", pr_url), ("RUN_REF", run_ref), ("EVIDENCE_REF", evidence_ref)):
         if value is not None and (not isinstance(value, str) or len(value) > 2048):

@@ -19,12 +19,13 @@ class PatchCandidate:
 class ValidationResult:
     """Deterministic precheck results for one generated candidate."""
 
-    syntax_ok: bool
-    format_ok: bool
-    compile_ok: bool
-    collected: int
+    syntax_ok: bool | None
+    format_ok: bool | None
+    compile_ok: bool | None
+    collected: int | None
     errors: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
+    unsupported: tuple[str, ...] = ()
 
 
 class GenerationPort(Protocol):
@@ -47,8 +48,19 @@ class MaterializationResult:
 
     workspace_identity: Mapping[str, str]
     changed_files: tuple[str, ...]
+    allowed_paths: tuple[str, ...]
     patch_digest: str
     materialized_test_digest: str
+
+    def to_manifest(self) -> dict[str, object]:
+        """Serialize verified allowed paths and expected content digests."""
+        return {
+            "subject": dict(self.workspace_identity),
+            "TESTS_ADDED": list(self.changed_files),
+            "allowed_paths": list(self.allowed_paths),
+            "expected_patch_digest": self.patch_digest,
+            "materialized_test_digest": self.materialized_test_digest,
+        }
 
 
 class PatchMaterializationPort(Protocol):

@@ -10,7 +10,8 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.component.run_state_server import create_server
-from atg.adapters.generation.deterministic import DeterministicValidationAdapter
+from atg.adapters.generation.deterministic import RequestGenerationAdapter
+from atg.ports.generation import ValidationResult
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.domain.generation import canonical_patch
 from atg.domain.repository_analysis import RepositorySubject
@@ -29,7 +30,8 @@ class GenerationHTTPTests(unittest.TestCase):
         self.repository_id = "https://git.example/http-gen.git"
         self.repository_digest = LocalRepositoryContextAdapter().collect(RepositoryContextRequest(RepositorySubject(self.repository_id, "abc123"), str(self.root))).profile.scanned_content_digest
         self.validator = RecordingValidationAdapter()
-        self.server = create_server(capabilities=("repository-discovery",), repository_roots={(self.repository_id, "abc123"): str(self.root)}, generation_validator=self.validator)
+        self.generator = RecordingGenerationAdapter()
+        self.server = create_server(capabilities=("repository-discovery",), repository_roots={(self.repository_id, "abc123"): str(self.root)}, generation_adapter=self.generator, generation_validator=self.validator)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_port}"
@@ -95,9 +97,11 @@ class GenerationHTTPTests(unittest.TestCase):
         self.assertEqual(doc["manifest"]["generation_id"], "gen-http-1")
         self.assertEqual(doc["manifest"]["status"], "verified")
         self.assertEqual(self.validator.calls, 1)
+        self.assertEqual(self.generator.calls, 1)
         status, duplicate = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-key"})
         self.assertEqual(status, 200)
         self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(self.generator.calls, 1)
         status, fetched = self.request("GET", "/generations/gen-http-1")
         self.assertEqual(status, 200)
         self.assertEqual(fetched["manifest"]["generation_id"], "gen-http-1")
@@ -132,10 +136,19 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class RecordingValidationAdapter(DeterministicValidationAdapter):
+class RecordingValidationAdapter:
     def __init__(self):
         self.calls = 0
 
     def validate(self, candidate):
         self.calls += 1
-        return super().validate(candidate)
+        return ValidationResult(True, True, True, 1)
+
+
+class RecordingGenerationAdapter(RequestGenerationAdapter):
+    def __init__(self):
+        self.calls = 0
+
+    def generate(self, request, attempt, feedback):
+        self.calls += 1
+        return super().generate(request, attempt, feedback)

@@ -227,7 +227,7 @@ class GenerationService:
             feedback = tuple(
                 check.get("detail", f"{check['name']} check failed")
                 for check in attempts[-1].get("checks", [])
-                if check.get("status") == "fail"
+                if check.get("status") != "pass"
             ) if attempts else ()
             input_digest = (
                 "sha256:" + hashlib.sha256(json.dumps(
@@ -258,7 +258,7 @@ class GenerationService:
             stop_after_existing = bool(
                 attempts
                 and (
-                    attempts[-1]["status"] == "verified"
+                    attempts[-1]["status"] in {"verified", "inconclusive"}
                     or any(check["name"] == "approved_path" and check["status"] == "fail" for check in attempts[-1]["checks"])
                 )
             )
@@ -320,7 +320,7 @@ class GenerationService:
                 final_patch_digest = patch_digest
                 final_materialized_digest = materialized_digest
                 final_status = status
-                if status == "verified" or path_error is not None:
+                if status in {"verified", "inconclusive"} or path_error is not None:
                     break
                 input_payload = json.dumps(
                     {"output_digest": patch_digest, "findings": feedback},
@@ -332,7 +332,11 @@ class GenerationService:
             if final_candidate is None or final_patch_digest is None or final_materialized_digest is None:
                 raise GenerationConflictError("generation produced no candidate")
             if final_status != "verified":
-                final_status = "inconclusive" if len(attempts) == self.MAX_ATTEMPTS else "rejected"
+                final_status = (
+                    "inconclusive"
+                    if final_status == "inconclusive" or len(attempts) == self.MAX_ATTEMPTS
+                    else "rejected"
+                )
             manifest = {
                 "contract": "atg.generation",
                 "version": "1.0",

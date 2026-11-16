@@ -39,13 +39,13 @@ Not owned here (explicit non-goals):
 
 ## 3. Contracts
 
-Existing `atg.generation` v1 (already published):
+Existing `atg.generation` v1 (the current repository contract):
 ```
-required: [contract, version, generation_id, run_id, plan_id, plan_revision, plan_artifact_digest, plan_checkpoint_id, plan_decision_id, base, candidate, status, created_at]
+required: [contract, version, generation_id, run_id, plan_id, plan_revision, plan_artifact_digest, plan_checkpoint_id, plan_decision_id, base, candidate, patch_digest, materialized_test_digest, subject_materializations, model, tool, worker, attempts, artifacts, status, created_at]
 base/candidate: common#/$defs/identity (git-tree)
-patch_digest + changed_files required when status in [generated, verified]
-artifacts: common#/$defs/artifact[]
-model: common#/$defs/identity
+changed_files required for generated/verified outcomes; constrained to approved test roots
+each attempt binds patch + materialized artifacts, changed files, checks, model/tool/worker identity, and status
+subject_materializations binds the materialized-test digest separately to base and candidate
 status: generated | verified | rejected | inconclusive
 ```
 
@@ -57,15 +57,15 @@ Example already valid: `contracts/examples/generation.json` (generation-001, bas
 
 New event linkage:
 - `generation_started` already in `run_state.py:EVENT_TYPES` - requires `generation_id`
-- `generation_completed` already requires `generation_id + artifact_id + artifact_digest`
+- `generation_completed` requires `generation_id + artifact_id + artifact_digest`; rejected/inconclusive outcomes have distinct terminal events
 - Generation does NOT create its own checkpoint kind; it is gated by `plan_review` checkpoint + `code_review` prerequisite on `completed_generation_*` (see run_state.py:200-204). This matches TG-5 -> TG-6 handoff.
 
 ## 4. Run-state integration
 
-Current state machine already handles generation (verified 2026-11-16):
+Current state machine handles generation and recoverable attempts:
 
 ```
-planning --plan_submitted--> planning --planning_completed--> planning --checkpoint_created(plan_review)--> plan_review --decision_recorded(approved)--> coding --generation_started--> coding --generation_completed--> coding --checkpoint_created(code_review)--> code_review
+planning --plan_submitted--> planning --planning_completed--> planning --checkpoint_created(plan_review)--> plan_review --decision_recorded(approved)--> coding --generation_started--> coding --(completed | rejected | inconclusive)--> coding
 ```
 
 Relevant guards (run_state.py):
@@ -74,11 +74,11 @@ Relevant guards (run_state.py):
 - `code_review` requires `completed_generation_*` triple present AND `generation_in_progress == false` (line 412-416) - in-progress check runs first
 - `plan_submitted` revision monotonic within cycle; `return_to_analyze` clears active plan for new cycle
 
-Implementation rule: `GenerationService.generate()` must:
+Implementation rule: `GenerationService.generate()`:
 1. Load `run_state` -> assert `status == coding` (i.e., plan approved, not terminal)
 2. Load `plan` via `store.get_plan(plan_id)` -> `manifest.status == approved` + `digest == plan_artifact_digest` + checkpoint `state == approved`
 3. Emit `generation_started` (revision-checked), then run bounded tool loop, then emit `generation_completed` with `artifact_digest = sha256(patch_bytes)` and `artifact_id = artifact-{generation_id}`
-4. Persist `atg.generation` document atomically with the `generation_completed` event (same pattern as `record_plan`).
+4. Persist `atg.generation` with the terminal event, after the start event and every bounded attempt have been committed. A restart with the same request resumes from the stored attempt number.
 
 Duplicate handling: same `generation_id + request_digest` -> idempotent 200; conflicting digest -> `GenerationConflictError` 409 (parity with planning/feedback).
 
@@ -86,21 +86,21 @@ Duplicate handling: same `generation_id + request_digest` -> idempotent 200; con
 
 All deterministic, no model override:
 
-1. **Approved-path gate**: `changed_files` must be subset of `plan.allowed_paths` (derived from `plan.steps[].expected_evidence` + TF-3 `allowed_test_roots`). Reject if any path outside, if path contains `..`, absolute, or `src/main` edits. Tested via `tests/unit/test_generation_gates.py`.
+1. **Approved-path gate**: `changed_files` must be subset of `plan.allowed_paths` (currently discovered test roots carried into the plan). Reject absolute paths, traversal, unsupported extensions, and paths outside the approved roots. Patch headers, base contents, and materialized contents must agree exactly.
 
 2. **Patch provenance**: `patch_digest = sha256(exact UTF-8 patch bytes)`. Patch headers must exactly match persisted materialized file paths. Patch bytes and materialized file contents are stored as content-addressed artifacts and recomputed on read (row/bundle mismatch -> `ContractValidationError`).
 
-3. **Syntax/format/compile/collection**: delegated to `ValidationPort.validate(candidate)` returning `ValidationResult(collected, syntax_ok, format_ok, compile_ok, errors, limitations)`. The local deterministic adapter parses Python, applies bounded static Java/Kotlin syntax checks, rejects format and compile-error markers, and derives collection from materialized source. It records that these development checks do not prove live framework execution.
+3. **Syntax/format/compile/collection**: delegated to `ValidationPort.validate(candidate)`. The default local adapter can parse and compile Python source and check basic formatting; it does not claim framework collection, Java parsing, or compilation. Unsupported checks are `not_supported`, producing an explicit `inconclusive` result. A profile-backed adapter supplied after the 5050/fixture decisions must provide real format, compile, and collection checks for the target framework; test-runner execution remains 5048.
 
 4. **Assertion-quality gate** (`src/atg/gates/generation.py`):
-   - No `collected` -> `rejected: no tests collected`
+   - Collector reports zero tests -> `rejected: no tests collected`; no configured collector -> `inconclusive`
    - No `assert*` / `assertThat` / `assertEquals` in added lines -> `rejected: no meaningful assertion`
    - Weakened assertion (e.g., `assertTrue(true)`, removed assertion vs baseline) -> `rejected: weakened assertion`
    - Wrong target (test does not reference `plan.objective_refs` symbols) -> `rejected`
 
 5. **Bounded repair**: `max_attempts = 3` (constant, not model-controlled). Each attempt records input/output digests, model, tool, worker, checks, and exact artifact IDs. Every attempt is committed to `generation_attempts` before requesting the next candidate. Exhaustion -> `status=inconclusive`, not silent pass.
 
-6. **Materialized-test equivalence**: the canonical sorted path-to-content map is digested as `materialized_test_digest` and stored with exact contents as an artifact. TG-6 can verify workspace bytes against this artifact.
+6. **Materialized-test equivalence**: the canonical sorted path-to-content map is digested as `materialized_test_digest` and bound to both immutable subject identities. Exact contents are stored as an artifact. `FilesystemPatchMaterializer` applies only canonical patches into configured workspaces with descriptor-relative, no-follow path handling, base-content checks, atomic writes, and post-write digest verification.
 
 ## 6. Persistence
 
@@ -137,10 +137,11 @@ Methods:
 
 ```
 src/atg/ports/generation.py:
-  @dataclass GenerationRequest(generation_id, plan_id, run_id, expected_revision, created_at, model_ref)
-  @dataclass GenerationRecord(request_digest, manifest, artifacts, attempts, duplicate)
-  class GenerationPort(Protocol): generate(request, patch_candidate) -> PatchAttempt
-  class ValidationPort(Protocol): validate(patch_bytes) -> ValidationResult
+  @dataclass PatchCandidate(patch_text, materialized_files, base_files)
+  @dataclass ValidationResult(syntax_ok, format_ok, compile_ok, collected, unsupported)
+  class GenerationPort(Protocol): generate(request, attempt, feedback) -> PatchCandidate | None
+  class ValidationPort(Protocol): validate(candidate) -> ValidationResult
+  class PatchMaterializationPort(Protocol): materialize(candidate, workspace, digests) -> MaterializationResult
 ```
 
 Adapters:
@@ -156,9 +157,9 @@ Reuses `run_state_server.py` patterns (Idempotency-Key, BadRequest vs Conflict):
 ```
 POST /generations
   header: Idempotency-Key
-  body: {generation_id, plan_id, run_id, expected_revision, created_at, patch_text, materialized_files, base, candidate, model, tool, worker, repair_candidates?}
+  body: {generation_id, plan_id, run_id, expected_revision, created_at, patch_text, base_files, materialized_files, base, candidate, model, tool, worker, repair_candidates?}
   201 created, 200 duplicate (same digest), 400 BadRequest (missing/invalid plan, bad digest, path traversal), 409 PlanningConflictError (plan not approved/digest mismatch), 409 GenerationConflictError (generation_id bound to different inputs)
-  side-effect: emits generation_started + generation_completed + persists atg.generation bundle
+  side-effect: emits generation_started + one terminal event; persists attempts and atg.generation bundle
 
 GET /generations/{generation_id} -> 200 bundle or 404
 GET /runs/{run_id}/generations -> list (optional)
@@ -206,25 +207,28 @@ a deterministic test adapter only, not a production generator.
 
 Before treating 5047 as locally complete:
 
-1. Make the generation/validation adapters injectable through the local service
-   composition so 5050 can exercise a deterministic fake and candidate approved
-   endpoint without changing domain/application code.
-2. Add a bounded, symlink-safe materialization adapter that writes validated
-   test files into an isolated workspace, verifies the exact patch digest and
-   final file digest, and emits a neutral allowed-path/materialization manifest.
-3. Add the compatibility projection `SscTektonCompatibilityResult` as an
+1. **Complete:** generation and validation adapters are injectable through the
+   local service composition, so 5050 can exercise a fake or endpoint without
+   changing domain/application code.
+2. **Complete:** the bounded, symlink-safe materialization adapter applies only
+   canonical patches into configured workspaces and verifies patch/base/result
+   content digests.
+3. **Complete:** `SscTektonCompatibilityResult` is an
    optional adapter output (`TESTS_ADDED`, `PR_URL`, `RUN_REF`, `EVIDENCE_REF`,
    terminal status). Keep canonical ATG records authoritative and do not make
    Tekton mandatory or select it by implementing the projection.
-4. Ensure a generation is visibly `in_progress` before requesting candidate
-   output; persist each attempt before the next; recover/replay a matching
-   in-progress generation after process restart; bind request key and all
-   material inputs; persist per-subject test-content digests.
-5. Validate the full local vertical slice with an isolated fixture repository,
-   restart/replay, path-escape and symlink negatives, digest equivalence, and
-   adapter injection tests.
+4. **Complete:** generation starts visibly before candidate output; attempts
+   persist sequentially and resume after restart; request keys and material
+   inputs are bound; per-subject test digests are included.
+5. **Complete for the provider-neutral boundary:** isolated workspace,
+   restart/replay, path-escape/symlink, digest-equivalence, and adapter-injection
+   tests pass. The default validator deliberately returns `inconclusive` for
+   unsupported Java/framework compile or collection checks instead of claiming
+   success.
 
-5050 can then compare harness/model options against the same `GenerationPort`,
+The remaining 5047 implementation after the 5050 decision is to add the selected
+generator adapter and target-profile validation adapter behind these ports.
+5050 can compare harness/model options against the same `GenerationPort`,
 `ValidationPort`, approved plan, deterministic fixture, and persisted result.
 The evaluation should record candidate name/version/configuration/endpoint,
 commands, observations, limitations, security/licensing/ownership findings,
