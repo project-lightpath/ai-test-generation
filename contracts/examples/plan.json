@@ -19,6 +19,7 @@
   "approved_by": "reviewer-001",
   "provenance_ref": "provenance-001",
   "artifact_refs": ["artifact-plan-001"],
+  "allowed_paths": ["src/test/"],
   "assumptions": [],
   "gaps": [],
   "coverage_matrix": [{"objective_ref": "objective-001", "disposition": "planned"}],

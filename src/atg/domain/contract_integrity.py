@@ -243,6 +243,12 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                     errors.append("generation requires an approved plan")
                 if document.get("plan_revision") != plan.get("plan_revision"):
                     errors.append("generation plan revision differs from approved plan")
+                allowed_paths = tuple(plan.get("allowed_paths", []))
+                if not allowed_paths:
+                    errors.append("generation requires plan-owned allowed paths")
+                for path in document.get("changed_files", []):
+                    if not isinstance(path, str) or not path.startswith(allowed_paths):
+                        errors.append("generation changed file is outside plan-owned allowed paths")
                 checkpoint = _require_related(document, "atg.checkpoint", document.get("plan_checkpoint_id"), require, errors, "generation.plan_checkpoint_id")
                 if checkpoint is not None:
                     reviewed = checkpoint.get("reviewed_artifact") or {}
