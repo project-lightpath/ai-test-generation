@@ -93,6 +93,15 @@ class SQLiteRunStateStore:
                 request_digest TEXT NOT NULL,
                 document_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS generations (
+                generation_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                plan_id TEXT NOT NULL,
+                request_digest TEXT NOT NULL,
+                bundle_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS generations_by_run ON generations(run_id);
+            CREATE INDEX IF NOT EXISTS generations_by_plan ON generations(plan_id);
             """
         )
         self._backfill_checkpoint_projections()
@@ -289,6 +298,41 @@ class SQLiteRunStateStore:
                 self._connection.execute("INSERT INTO checkpoints(checkpoint_id, run_id, kind, document_json) VALUES (?, ?, ?, ?)", (record.checkpoint["checkpoint_id"], record.manifest["run_id"], record.checkpoint["kind"], json.dumps(record.checkpoint, sort_keys=True)))
                 self._connection.execute("COMMIT")
                 return record
+            except Exception:
+                self._connection.execute("ROLLBACK")
+                raise
+
+    def get_generation(self, generation_id: str) -> dict | None:
+        with self._lock:
+            row = self._connection.execute("SELECT bundle_json FROM generations WHERE generation_id = ?", (generation_id,)).fetchone()
+        if row is None:
+            return None
+        doc = json.loads(row["bundle_json"])
+        if row is not None:
+            if doc.get("generation_id") != generation_id:
+                raise ContractValidationError("persisted generation id mismatch")
+        return doc
+
+    def record_generation(self, generation_id: str, run_id: str, plan_id: str, request_digest: str, bundle: dict, started_event: RunEvent, completed_event: RunEvent) -> dict:
+        from atg.domain.schema_validation import validate_contract_document
+        validate_contract_document(bundle, "generation")
+        if started_event.run_id != run_id or completed_event.run_id != run_id:
+            raise ValueError("generation events must belong to generation run")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = self._connection.execute("SELECT request_digest, bundle_json FROM generations WHERE generation_id = ?", (generation_id,)).fetchone()
+                if existing is not None:
+                    if existing["request_digest"] != request_digest:
+                        from atg.application.generation import GenerationConflictError
+                        raise GenerationConflictError("generation identity is bound to different inputs")
+                    self._connection.execute("COMMIT")
+                    return json.loads(existing["bundle_json"])
+                self._apply_locked(started_event)
+                self._apply_locked(completed_event)
+                self._connection.execute("INSERT INTO generations(generation_id, run_id, plan_id, request_digest, bundle_json) VALUES (?, ?, ?, ?, ?)", (generation_id, run_id, plan_id, request_digest, json.dumps(bundle, sort_keys=True)))
+                self._connection.execute("COMMIT")
+                return bundle
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise

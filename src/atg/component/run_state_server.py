@@ -21,6 +21,7 @@ from atg.application.admission import AdmissionConflictError, AdmissionRequest, 
 from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService
 from atg.application.planning import PlanningConflictError, PlanningRequest, PlanningService
 from atg.application.feedback import FeedbackConflictError, FeedbackRequest
+from atg.application.generation import GenerationConflictError, GenerationRequest, GenerationService
 from atg.application.readiness import PlatformReadinessService
 from atg.domain.repository_analysis import RepositorySubject
 from atg.domain.schema_validation import ContractValidationError, contract_asset_path
@@ -44,6 +45,7 @@ ANALYSIS_FIELDS = frozenset({
 })
 PLAN_FIELDS = frozenset({"plan_id", "analysis_id", "run_id", "expected_revision", "occurred_at"})
 FEEDBACK_FIELDS = frozenset({"feedback_id", "run_id", "plan_revision", "plan_artifact_digest", "checkpoint_id", "created_at", "message", "category", "severity", "actor_id"})
+GENERATION_FIELDS = frozenset({"generation_id", "plan_id", "run_id", "expected_revision", "created_at", "patch_text", "changed_files", "base", "candidate", "model", "collected"})
 DECISION_FIELDS = frozenset({"run_id", "expected_revision", "occurred_at", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref", "reason"})
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
@@ -127,6 +129,7 @@ def create_server(
     repository_roots = dict(repository_roots or {})
     analysis_service = AnalysisService(store, LocalRepositoryContextAdapter(), tuple(analyzers))
     planning_service = PlanningService(store)
+    generation_service = GenerationService(store)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
@@ -160,6 +163,9 @@ def create_server(
                 elif len(parts) == 2 and parts[0] == "feedback":
                     feedback = store.get_feedback(parts[1])
                     self._respond(200, feedback) if feedback is not None else self._respond(404, {"error": "feedback not found"})
+                elif len(parts) == 2 and parts[0] == "generations":
+                    gen = store.get_generation(parts[1])
+                    self._respond(200, gen) if gen is not None else self._respond(404, {"error": "generation not found"})
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
                 elif parts == ["readiness"]:
@@ -462,6 +468,36 @@ def create_server(
                     result = store.apply(event)
                     self._respond(200, {"duplicate": result.duplicate, "state": result.state.to_document()})
                     return
+                if parts == ["generations"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("generation body must be a JSON object")
+                    unknown = sorted(set(body) - GENERATION_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported generation fields: {', '.join(unknown)}")
+                    for field in ("generation_id", "plan_id", "run_id"):
+                        try:
+                            validate_identifier(body[field], field)
+                        except (TypeError, ValueError) as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body["created_at"], "created_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body.get("expected_revision"), int) or isinstance(body.get("expected_revision"), bool) or body["expected_revision"] < 0:
+                        raise BadRequestError("expected_revision must be a non-negative integer")
+                    if not isinstance(body.get("patch_text"), str) or not body["patch_text"]:
+                        raise BadRequestError("patch_text is required")
+                    if not isinstance(body.get("changed_files"), list):
+                        raise BadRequestError("changed_files must be a list")
+                    from atg.domain.generation import validate_changed_files
+                    try:
+                        validate_changed_files(body["changed_files"])
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    request = GenerationRequest(generation_id=body["generation_id"], plan_id=body["plan_id"], run_id=body["run_id"], expected_revision=body["expected_revision"], created_at=body["created_at"], patch_text=body["patch_text"], changed_files=body["changed_files"], base=body.get("base"), candidate=body.get("candidate"), model=body.get("model"), collected=body.get("collected", 1))
+                    result = generation_service.generate(request)
+                    self._respond(201, result)
+                    return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
                         raise BadRequestError("request body must be a JSON object")
@@ -502,6 +538,8 @@ def create_server(
             except PlanningConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except FeedbackConflictError as exc:
+                self._respond(409, {"error": str(exc)})
+            except GenerationConflictError as exc:
                 self._respond(409, {"error": str(exc)})
             except AnalysisProcessingError:
                 self._respond(422, {"error": "analysis processing failed"})
