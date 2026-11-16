@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.component.run_state_server import create_server
+from atg.adapters.generation.deterministic import DeterministicValidationAdapter
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.domain.repository_analysis import RepositorySubject
 from atg.ports.repository import RepositoryContextRequest
@@ -26,7 +27,8 @@ class GenerationHTTPTests(unittest.TestCase):
         (self.root / "tests" / "test_app.py").write_text("def test_value():\n    assert True\n")
         self.repository_id = "https://git.example/http-gen.git"
         self.repository_digest = LocalRepositoryContextAdapter().collect(RepositoryContextRequest(RepositorySubject(self.repository_id, "abc123"), str(self.root))).profile.scanned_content_digest
-        self.server = create_server(capabilities=("repository-discovery",), repository_roots={(self.repository_id, "abc123"): str(self.root)})
+        self.validator = RecordingValidationAdapter()
+        self.server = create_server(capabilities=("repository-discovery",), repository_roots={(self.repository_id, "abc123"): str(self.root)}, generation_validator=self.validator)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.base = f"http://127.0.0.1:{self.server.server_port}"
@@ -90,6 +92,7 @@ class GenerationHTTPTests(unittest.TestCase):
         self.assertEqual(status, 201)
         self.assertEqual(doc["manifest"]["generation_id"], "gen-http-1")
         self.assertEqual(doc["manifest"]["status"], "verified")
+        self.assertEqual(self.validator.calls, 1)
         status, duplicate = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-key"})
         self.assertEqual(status, 200)
         self.assertTrue(duplicate["duplicate"])
@@ -122,3 +125,12 @@ class GenerationHTTPTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordingValidationAdapter(DeterministicValidationAdapter):
+    def __init__(self):
+        self.calls = 0
+
+    def validate(self, candidate):
+        self.calls += 1
+        return super().validate(candidate)

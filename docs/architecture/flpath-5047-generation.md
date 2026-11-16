@@ -1,6 +1,6 @@
 # FLPATH-5047: Generate Bounded Native Tests with Exact Patch Provenance
 
-Status: Implemented locally (TG-5 - Code)
+Status: Local adapter-neutral Code boundary implemented; integration handoff pending
 Parent: FLPATH-5030 AI Test Generation MVP
 Depends on: FLPATH-5046 (approved plan + digest-bound checkpoint)
 Upstream: FLPATH-4995/5002/5012 (fixture/profile/facts) consumed via neutral ports; NOT owned here
@@ -197,20 +197,55 @@ Replay/evaluation:
 | 7. Contract integrity + schema tools | TG | `domain/contract_integrity.py`, `scripts/validate_contracts.py` | Complete |
 | 8. Failure-register + docs | TG | `contracts/failure-register/v1/cases.json`, `docs/architecture/flpath-5047-generation.md` | Complete |
 
-## 11. Non-breaking change safety
+## 11. Remaining Local Path and 5050 Handoff
+
+5047 must finish the stable, provider-neutral seam; it must not select an LLM,
+agent framework, model endpoint, or Tekton responsibility split. Those are the
+decision outputs of FLPATH-5050 and FLPATH-5051. The request-backed generator is
+a deterministic test adapter only, not a production generator.
+
+Before treating 5047 as locally complete:
+
+1. Make the generation/validation adapters injectable through the local service
+   composition so 5050 can exercise a deterministic fake and candidate approved
+   endpoint without changing domain/application code.
+2. Add a bounded, symlink-safe materialization adapter that writes validated
+   test files into an isolated workspace, verifies the exact patch digest and
+   final file digest, and emits a neutral allowed-path/materialization manifest.
+3. Add the compatibility projection `SscTektonCompatibilityResult` as an
+   optional adapter output (`TESTS_ADDED`, `PR_URL`, `RUN_REF`, `EVIDENCE_REF`,
+   terminal status). Keep canonical ATG records authoritative and do not make
+   Tekton mandatory or select it by implementing the projection.
+4. Ensure a generation is visibly `in_progress` before requesting candidate
+   output; persist each attempt before the next; recover/replay a matching
+   in-progress generation after process restart; bind request key and all
+   material inputs; persist per-subject test-content digests.
+5. Validate the full local vertical slice with an isolated fixture repository,
+   restart/replay, path-escape and symlink negatives, digest equivalence, and
+   adapter injection tests.
+
+5050 can then compare harness/model options against the same `GenerationPort`,
+`ValidationPort`, approved plan, deterministic fixture, and persisted result.
+The evaluation should record candidate name/version/configuration/endpoint,
+commands, observations, limitations, security/licensing/ownership findings,
+and recommendation; it must not silently make the exercised provider a runtime
+dependency. 5048 consumes the versioned generated artifacts and materialization
+manifest, while 5049 evaluates execution evidence and quality outcomes.
+
+## 12. Non-breaking change safety
 
 - `contracts/v1/generation.schema.json` is already published; only additive `allOf` constraints allowed (no required-field removal). Use `contracts/overrides/<profile>/` only if pre-consumer destructive experiment needed (per AGENTS.md contract rule).
 - `run_state` statuses unchanged; generation uses existing `coding` status + `completed_generation_*` fields.
 - SQLite: new table only; no ALTER of existing tables.
 
-## 12. Resolved implementation decisions
+## 13. Resolved implementation decisions
 
 - Allowed paths are derived from Analyze's discovered test inventory, persisted on the approved plan, and enforced against both diff headers and materialized file paths.
 - Model, tool, and worker identities are required by the local domain and successful-generation schema projection.
 - Every repair has an attempt document and two content-addressed artifacts (patch and materialized tests).
 - Tekton compatibility: `TESTS_ADDED` + `EVIDENCE_REF` emission is TG-6 (FLPATH-5048) responsibility; 5047 only ensures patch is materializable at that digest.
 
-## 13. Validation commands
+## 14. Validation commands
 
 ```bash
 .venv/bin/pip install -e '.[test]'

@@ -71,8 +71,10 @@ def create_server(
     capabilities=(),
     repository_roots=None,
     analyzers=(),
+    generation_adapter=None,
+    generation_validator=None,
 ):
-    """Create the local HTTP development component."""
+    """Create the local component with injectable Code-stage adapters."""
     store = SQLiteRunStateStore(database)
 
     class CapabilityCheck:
@@ -130,7 +132,9 @@ def create_server(
     repository_roots = dict(repository_roots or {})
     analysis_service = AnalysisService(store, LocalRepositoryContextAdapter(), tuple(analyzers))
     planning_service = PlanningService(store)
-    generation_service = GenerationService(store)
+    generation_service = GenerationService(
+        store, generator=generation_adapter, validator=generation_validator
+    )
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
