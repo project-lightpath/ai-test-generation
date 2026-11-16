@@ -13,6 +13,7 @@ _ASSERT_CALL = re.compile(r"\bassert\w*\s*\(", re.IGNORECASE)
 _JAVA_TEST_ANNOTATION = re.compile(
     r"@(?:[A-Za-z_$][\w$]*\.)*(?:Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\b"
 )
+_JAVA_ANNOTATION = re.compile(r"@(?:[A-Za-z_$][\w$]*\.)*[A-Za-z_$][\w$]*")
 _JAVA_TEST_METHOD = re.compile(
     r"(?P<name>[A-Za-z_$][\w$]*)\s*\((?P<parameters>[^{}]*)\)\s*(?:(?:throws\s+"
     r"[A-Za-z_$][\w$.]*(?:\s*,\s*[A-Za-z_$][\w$.]*)*)|"
@@ -149,6 +150,8 @@ def _python_strong_assertion(node: ast.AST) -> bool:
                 return False
             return True
         return isinstance(node.test, ast.Call)
+    if _python_exception_assertion(node):
+        return True
     if not isinstance(node, ast.Call):
         return False
     name = _python_call_name(node.func).lower()
@@ -179,6 +182,52 @@ def _python_call_name(node: ast.AST) -> str:
     return ""
 
 
+def _python_exception_assertion(node: ast.AST) -> bool:
+    if not isinstance(node, (ast.With, ast.AsyncWith)):
+        return False
+    for item in node.items:
+        context = item.context_expr
+        if (
+            isinstance(context, ast.Call)
+            and _python_call_name(context.func).lower() == "raises"
+            and context.args
+        ):
+            return True
+    return False
+
+
+def _python_executable_nodes(root: ast.AST):
+    pending = [root]
+    visited: set[int] = set()
+    while pending:
+        scope = pending.pop()
+        if id(scope) in visited:
+            continue
+        visited.add(id(scope))
+
+        helpers: dict[str, ast.AST] = {}
+        declarations = list(getattr(scope, "body", ()))
+        while declarations:
+            declaration = declarations.pop()
+            if isinstance(declaration, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                helpers[declaration.name] = declaration
+            elif not isinstance(declaration, ast.ClassDef):
+                declarations.extend(ast.iter_child_nodes(declaration))
+
+        nodes = [scope]
+        while nodes:
+            node = nodes.pop()
+            yield node
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                helper = helpers.get(node.func.id)
+                if helper is not None:
+                    pending.append(helper)
+            for child in reversed(list(ast.iter_child_nodes(node))):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    continue
+                nodes.append(child)
+
+
 def _python_test_methods(source: str) -> dict[str, _METHOD_SUMMARY]:
     try:
         tree = ast.parse(source)
@@ -194,8 +243,12 @@ def _python_test_methods(source: str) -> dict[str, _METHOD_SUMMARY]:
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if statement.name.startswith("test"):
                     assertions = [
-                        node for node in ast.walk(statement)
-                        if isinstance(node, ast.Assert)
+                        node for node in _python_executable_nodes(statement)
+                        if isinstance(node, (ast.Assert, ast.With, ast.AsyncWith))
+                        and (
+                            isinstance(node, ast.Assert)
+                            or _python_exception_assertion(node)
+                        )
                         or (
                             isinstance(node, ast.Call)
                             and _python_call_name(node.func).lower().startswith("assert")
@@ -204,7 +257,7 @@ def _python_test_methods(source: str) -> dict[str, _METHOD_SUMMARY]:
                     meaningful = sum(not _python_trivial_assertion(node) for node in assertions)
                     strong = sum(_python_strong_assertion(node) for node in assertions)
                     symbols: set[str] = set()
-                    for node in ast.walk(statement):
+                    for node in _python_executable_nodes(statement):
                         if isinstance(node, ast.Name):
                             symbols.add(node.id)
                         elif isinstance(node, ast.Attribute):
@@ -228,6 +281,38 @@ def _java_call_arguments(source: str, match: re.Match[str]) -> str:
     return source[opening + 1:end - 1] if depth == 0 else source[opening + 1:]
 
 
+def _java_call_end(source: str, opening: int) -> int:
+    depth = 1
+    end = opening + 1
+    while end < len(source) and depth:
+        depth += (source[end] == "(") - (source[end] == ")")
+        end += 1
+    return end if depth == 0 else -1
+
+
+def _java_assertj_terminal(source: str, match: re.Match[str]) -> str | None:
+    end = _java_call_end(source, match.end() - 1)
+    if end < 0:
+        return None
+    terminal = None
+    while end < len(source):
+        suffix = re.match(r"\s*\.\s*([A-Za-z_$][\w$]*)\s*\(", source[end:])
+        if suffix is None:
+            break
+        method = suffix.group(1)
+        opening = end + suffix.end() - 1
+        end = _java_call_end(source, opening)
+        if end < 0:
+            break
+        lowered = method.lower()
+        if (
+            lowered.startswith(("is", "has", "contains", "doesnot"))
+            or lowered in {"startsWith".lower(), "endsWith".lower(), "matches", "satisfies"}
+        ):
+            terminal = method
+    return terminal
+
+
 def _java_strong_assertion(source: str, match: re.Match[str]) -> bool:
     name = re.match(r"assert\w+", match.group(), re.IGNORECASE)
     if name is None:
@@ -240,7 +325,13 @@ def _java_strong_assertion(source: str, match: re.Match[str]) -> bool:
         return True
     arguments = _java_call_arguments(source, match)
     if method.endswith("assertthat"):
-        return bool(re.search(r"\b(?:equalTo|sameInstance|greaterThan|lessThan|contains)\s*\(", arguments))
+        terminal = _java_assertj_terminal(source, match)
+        if terminal is None:
+            return False
+        return terminal.lower().startswith((
+            "isequalto", "isnotequalto", "isgreaterthan", "islessthan", "contains",
+            "startswith", "endswith", "matches", "satisfies",
+        ))
     if method.endswith(("asserttrue", "assertfalse")):
         if re.search(r"(?:==|!=|\bis\s+)(?:\s*null\b)|(?:\bnull\b)\s*(?:==|!=|\bis\b)", arguments):
             return False
@@ -282,6 +373,27 @@ def _find_test_body_opening(source: str, start: int) -> int:
     return -1
 
 
+def _without_java_annotations(source: str) -> str:
+    result: list[str] = []
+    cursor = 0
+    for annotation in _JAVA_ANNOTATION.finditer(source):
+        if annotation.start() < cursor:
+            continue
+        result.append(source[cursor:annotation.start()])
+        end = annotation.end()
+        opening = end
+        while opening < len(source) and source[opening].isspace():
+            opening += 1
+        if opening < len(source) and source[opening] == "(":
+            annotation_end = _java_call_end(source, opening)
+            if annotation_end >= 0:
+                end = annotation_end
+        result.append(" " * (end - annotation.start()))
+        cursor = end
+    result.append(source[cursor:])
+    return "".join(result)
+
+
 def _java_test_methods(source: str) -> dict[str, _METHOD_SUMMARY]:
     code = _mask_non_code(source)
     type_scopes = []
@@ -296,7 +408,7 @@ def _java_test_methods(source: str) -> dict[str, _METHOD_SUMMARY]:
         opening = _find_test_body_opening(code, annotation.end())
         if opening < 0:
             continue
-        signature = code[annotation.end():opening]
+        signature = _without_java_annotations(code[annotation.end():opening])
         method = _JAVA_TEST_METHOD.search(signature)
         if method is None:
             continue
@@ -317,7 +429,11 @@ def _java_test_methods(source: str) -> dict[str, _METHOD_SUMMARY]:
     for name, start, end, body_start in ranges:
         region = code[start:end]
         body = code[body_start:end - 1]
-        assertions = list(_ASSERT_CALL.finditer(region))
+        assertions = [
+            match for match in _ASSERT_CALL.finditer(region)
+            if not match.group().lower().startswith("assertthat")
+            or _java_assertj_terminal(region, match) is not None
+        ]
         java_assertions = list(_JAVA_ASSERT_STATEMENT.finditer(region))
         trivial = sum(
             1
@@ -355,7 +471,7 @@ def _java_assertion_statement_is_strong(expression: str) -> bool:
 def _test_methods(path: str, source: str) -> dict[str, _METHOD_SUMMARY]:
     if path.endswith(".py"):
         return _python_test_methods(source)
-    if path.endswith((".java", ".kt")):
+    if path.endswith(".java"):
         return _java_test_methods(source)
     return {}
 
@@ -405,7 +521,7 @@ def evaluate_generation(
     target_symbols = tuple(filter(None, (_target_symbol(value) for value in target_refs)))
     target_ok = bool(target_symbols) and any(symbol in symbols for symbol in target_symbols)
     unsupported_source = any(
-        not path.endswith((".py", ".java", ".kt"))
+        not path.endswith((".py", ".java"))
         for path in candidate.materialized_files
     )
     unsupported = set(validation.unsupported)

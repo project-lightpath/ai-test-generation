@@ -26,7 +26,11 @@ from atg.domain.run_state import (
     validate_identifier,
     validate_timestamp,
 )
-from atg.domain.schema_validation import ContractValidationError, validate_contract_document
+from atg.domain.schema_validation import (
+    ContractValidationError,
+    validate_contract_document,
+    validate_contract_fragment,
+)
 from atg.gates.generation import evaluate_generation
 from atg.ports.generation import GeneratedCandidate, GenerationProvenance, PatchCandidate
 
@@ -327,6 +331,20 @@ class GenerationService:
                     "status": status,
                     "checks": list(checks),
                 }
+                validate_contract_fragment(
+                    attempt, "generation", ("properties", "attempts", "items")
+                )
+                validate_artifact_bundle(
+                    {
+                        "attempts": [attempt],
+                        "artifacts": [item["artifact"] for item in (
+                            patch_artifact, materialized_artifact, base_artifact
+                        )],
+                        "patch_digest": patch_digest,
+                        "materialized_test_digest": materialized_digest,
+                    },
+                    (patch_artifact, materialized_artifact, base_artifact),
+                )
                 self._store.record_generation_attempt(
                     request.generation_id,
                     request.run_id,
@@ -489,11 +507,13 @@ def validate_generation_record(
 ) -> None:
     """Validate contract, attempt history, and exact artifact closure."""
     validate_contract_document(record.manifest, "generation")
-    validate_generation_manifest(record.manifest, plan_manifest)
-    if tuple(record.manifest.get("attempts", [])) != record.attempts:
-        raise ContractValidationError("generation attempt history differs from manifest")
     try:
+        validate_generation_manifest(record.manifest, plan_manifest)
+        if tuple(record.manifest.get("attempts", [])) != record.attempts:
+            raise ValueError("generation attempt history differs from manifest")
         validate_artifact_bundle(record.manifest, record.artifacts)
+    except ContractValidationError:
+        raise
     except ValueError as exc:
         raise ContractValidationError(str(exc)) from exc
 

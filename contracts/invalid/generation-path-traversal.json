@@ -32,6 +32,7 @@
     "output_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "patch_artifact_id": "artifact-generation-invalid-patch",
     "materialized_artifact_id": "artifact-generation-invalid-tests",
+    "base_artifact_id": "artifact-generation-invalid-base",
     "changed_files": ["tests/../src/main/App.java"],
     "model": {"kind": "model", "id": "approved-model", "version": "1"},
     "model_endpoint": {"kind": "model-endpoint", "id": "endpoint-label-1", "version": "1"},
@@ -45,6 +46,7 @@
   }],
   "artifacts": [
     {"artifact_id": "artifact-generation-invalid-patch", "media_type": "text/x-diff", "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
-    {"artifact_id": "artifact-generation-invalid-tests", "media_type": "application/vnd.atg.materialized-tests+json", "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+    {"artifact_id": "artifact-generation-invalid-tests", "media_type": "application/vnd.atg.materialized-tests+json", "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"artifact_id": "artifact-generation-invalid-base", "media_type": "application/vnd.atg.base-files+json", "digest": "sha256:abababababababababababababababababababababababababababababababab"}
   ]
 }

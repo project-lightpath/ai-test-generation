@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from atg.domain.digests import digests_equal
+from atg.domain.generation import validate_changed_files
 from atg.ports.generation import MaterializationResult, SscTektonCompatibilityResult
 
 
@@ -34,12 +37,42 @@ def to_ssc_tekton_compatibility(
             )
         ):
             raise ValueError("compatibility materialization differs from canonical generation")
-        if not all(
-            path.startswith(materialization.allowed_paths)
-            for path in materialization.changed_files
+        handoff = manifest.get("materialization_handoff")
+        if not isinstance(handoff, Mapping) or handoff.get("status") != "ready":
+            raise ValueError("compatibility result requires a canonical materialization handoff")
+        allowed_paths = handoff.get("allowed_paths")
+        if not isinstance(allowed_paths, (list, tuple)) or not all(
+            isinstance(path, str) for path in allowed_paths
         ):
-            raise ValueError("compatibility output contains a path outside its allowlist")
-        tests_added = materialization.changed_files
+            raise ValueError("canonical materialization handoff has invalid allowed paths")
+        canonical_allowed = tuple(allowed_paths)
+        if not isinstance(materialization.allowed_paths, (list, tuple)) or not all(
+            isinstance(path, str) for path in materialization.allowed_paths
+        ):
+            raise ValueError("materialization result has invalid allowed paths")
+        handoff_files = handoff.get("changed_files")
+        generation_files = manifest.get("changed_files")
+        if any(
+            not isinstance(paths, (list, tuple))
+            or not all(isinstance(path, str) for path in paths)
+            for paths in (handoff_files, generation_files, materialization.changed_files)
+        ):
+            raise ValueError("compatibility path inventories must be lists of strings")
+        if tuple(materialization.allowed_paths) != canonical_allowed:
+            raise ValueError("compatibility allowlist differs from canonical handoff")
+        try:
+            changed_files = validate_changed_files(
+                materialization.changed_files, canonical_allowed
+            )
+            canonical_changed = validate_changed_files(handoff_files, canonical_allowed)
+            generation_changed = validate_changed_files(generation_files, canonical_allowed)
+        except ValueError as exc:
+            raise ValueError("compatibility output contains an invalid path") from exc
+        if set(changed_files) != set(canonical_changed):
+            raise ValueError("compatibility inventory differs from canonical handoff")
+        if set(generation_changed) != set(canonical_changed):
+            raise ValueError("generation inventory differs from canonical handoff")
+        tests_added = canonical_changed
     for name, value in (("PR_URL", pr_url), ("RUN_REF", run_ref), ("EVIDENCE_REF", evidence_ref)):
         if value is not None and (not isinstance(value, str) or len(value) > 2048):
             raise ValueError(f"{name} must be a bounded string")

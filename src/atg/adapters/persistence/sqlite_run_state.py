@@ -22,6 +22,7 @@ from atg.application.planning import PlanRecord, PlanningConflictError, validate
 from atg.domain.schema_validation import ContractValidationError
 from atg.domain.run_state import (
     DuplicateEventError,
+    InvalidEventError,
     InvalidTransitionError,
     RunEvent,
     RunState,
@@ -606,6 +607,8 @@ class SQLiteRunStateStore:
 
     def apply(self, event: RunEvent) -> TransitionResult:
         """Apply one event in an immediate SQLite transaction."""
+        if event.event_type == "generation_started" and event.generation_request_digest is None:
+            raise InvalidEventError("new generation_started events require a request digest")
         with self._lock:
             self._connection.execute("BEGIN IMMEDIATE")
             try:

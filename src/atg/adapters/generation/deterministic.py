@@ -206,7 +206,7 @@ class FilesystemPatchMaterializer:
 
 def _read_relative_file(parent_fd: int, name: str, limit: int) -> bytes | None:
     """Read a regular file relative to an already-safe directory descriptor."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         file_fd = os.open(name, flags, dir_fd=parent_fd)
     except FileNotFoundError:

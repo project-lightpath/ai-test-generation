@@ -151,10 +151,8 @@ class RunEvent:
             raise InvalidEventError(f"{self.event_type} requires a reason")
         if self.event_type == "return_to_plan" and not self.feedback_id:
             raise InvalidEventError("return_to_plan requires feedback_id")
-        if self.event_type == "generation_started" and not all(
-            (self.generation_id, self.generation_request_digest)
-        ):
-            raise InvalidEventError("generation_started requires generation_id and request digest")
+        if self.event_type == "generation_started" and not self.generation_id:
+            raise InvalidEventError("generation_started requires generation_id")
         if self.event_type in {"generation_rejected", "generation_inconclusive"} and not self.generation_id:
             raise InvalidEventError(f"{self.event_type} requires generation_id")
         if self.event_type == "generation_completed" and not all(

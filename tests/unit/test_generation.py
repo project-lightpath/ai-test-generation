@@ -3,7 +3,7 @@ import ast
 import pathlib
 import sys
 import unittest
-from dataclasses import replace
+from dataclasses import asdict, replace
 from tempfile import TemporaryDirectory
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
@@ -32,7 +32,7 @@ from atg.ports.generation import (
     GenerationProvenance,
     ValidationResult,
 )
-from atg.domain.run_state import RunEvent
+from atg.domain.run_state import InvalidEventError, RunEvent, event_fingerprint
 from atg.ports.generation import PatchCandidate
 from tests.unit.test_analysis import (
     analysis_request,
@@ -153,6 +153,11 @@ def request(state, generation_id="generation-1", key="generation-key", endpoint=
 
 
 class GenerationServiceTests(unittest.TestCase):
+    def test_empty_subject_version_is_rejected_before_generation_starts(self):
+        state = type("State", (), {"revision": 0})()
+        with self.assertRaisesRegex(ValueError, "base.version"):
+            replace(request(state), base={**BASE, "version": ""})
+
     def test_generation_persists_exact_artifacts_and_events(self):
         with TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -234,7 +239,28 @@ class GenerationServiceTests(unittest.TestCase):
                 request(store.get_run("run-1"))
             )
             manifest = json.loads(json.dumps(record.manifest))
-            manifest["materialization_handoff"]["changed_files"] = ["src/main/App.java"]
+            manifest["changed_files"] = ["tests/test_never_generated.py"]
+            manifest["materialization_handoff"]["changed_files"] = [
+                "tests/test_never_generated.py"
+            ]
+            tampered = GenerationRecord(
+                record.request_digest, manifest, record.artifacts, record.attempts
+            )
+            with self.assertRaises(ContractValidationError):
+                validate_generation_record(tampered, plan.manifest)
+            store.close()
+
+    def test_verified_manifest_requires_passing_final_attempt_evidence(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, plan = prepare_coding_store(root)
+            record = generation_service(store, (generated(candidate()),)).generate(
+                request(store.get_run("run-1"))
+            )
+            manifest = json.loads(json.dumps(record.manifest))
+            manifest["attempts"][-1]["status"] = "rejected"
+            manifest["attempts"][-1]["checks"][-1]["status"] = "fail"
             tampered = GenerationRecord(
                 record.request_digest, manifest, record.artifacts, record.attempts
             )
@@ -384,6 +410,83 @@ class GenerationServiceTests(unittest.TestCase):
 
             recovered = generation_service(store, (generated(candidate()),)).generate(req)
             self.assertEqual(recovered.manifest["status"], "verified")
+            store.close()
+
+    def test_legacy_generation_start_event_remains_readable_and_replayable(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            state = store.get_run("run-1")
+            legacy_event = RunEvent(
+                event_id="legacy-generation-started",
+                run_id="run-1",
+                event_type="generation_started",
+                expected_revision=state.revision,
+                occurred_at="2099-11-09T17:00:05Z",
+                generation_id="legacy-generation",
+            )
+            next_state = state.apply(legacy_event).state
+            legacy_payload = asdict(legacy_event)
+            legacy_payload.pop("generation_request_digest")
+            payload_json = json.dumps(legacy_payload, sort_keys=True, separators=(",", ":"))
+            with store._lock:
+                store._connection.execute("BEGIN IMMEDIATE")
+                store._connection.execute(
+                    "INSERT INTO run_events(event_id, run_id, applied_revision, payload_digest, payload_json, occurred_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        legacy_event.event_id,
+                        legacy_event.run_id,
+                        next_state.revision,
+                        event_fingerprint(legacy_event),
+                        payload_json,
+                        legacy_event.occurred_at,
+                    ),
+                )
+                store._connection.execute(
+                    "UPDATE runs SET revision = ?, state_json = ? WHERE run_id = ?",
+                    (next_state.revision, json.dumps(next_state.to_document(), sort_keys=True), "run-1"),
+                )
+                store._connection.execute("COMMIT")
+
+            loaded = tuple(store.events("run-1"))[-1]
+            self.assertIsNone(loaded.generation_request_digest)
+            self.assertEqual(store.replay("run-1"), next_state)
+            with self.assertRaisesRegex(InvalidEventError, "new generation_started events"):
+                store.apply(
+                    RunEvent(
+                        event_id="new-generation-started-without-digest",
+                        run_id="run-1",
+                        event_type="generation_started",
+                        expected_revision=next_state.revision,
+                        occurred_at="2099-11-09T17:00:06Z",
+                        generation_id="new-generation",
+                    )
+                )
+            store.close()
+
+    def test_invalid_provider_identity_is_not_persisted_and_can_be_corrected(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            req = request(store.get_run("run-1"))
+            bad_provenance = GenerationProvenance(
+                model={**MODEL, "version": ""},
+                model_endpoint=ENDPOINT,
+                tool=TOOL,
+                worker=WORKER,
+                prompt_digest=FAKE_PROVENANCE.prompt_digest,
+                config_digest=FAKE_PROVENANCE.config_digest,
+                invocation_digest=FAKE_PROVENANCE.invocation_digest,
+            )
+            with self.assertRaisesRegex(ValueError, "model.version"):
+                generation_service(store, (GeneratedCandidate(candidate(), bad_provenance),)).generate(req)
+            self.assertEqual(store.get_generation_attempts(req.generation_id, req.digest()), ((), ()))
+
+            record = generation_service(store, (generated(candidate()),)).generate(req)
+            self.assertEqual(record.manifest["status"], "verified")
             store.close()
 
     def test_missing_initial_candidate_remains_resumable(self):
