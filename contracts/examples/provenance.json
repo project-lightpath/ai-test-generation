@@ -14,6 +14,11 @@
       "artifact_id": "artifact-analysis-001",
       "media_type": "application/vnd.atg.analysis+json",
       "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "artifact_id": "artifact-plan-001",
+      "media_type": "application/vnd.atg.plan+json",
+      "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     }
   ],
   "contract_versions": {"atg.request": "1.0", "atg.analysis": "1.0", "atg.generation": "1.0", "atg.execution": "1.0"},
