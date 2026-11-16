@@ -4,7 +4,7 @@
   "title": "ATG test plan",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "plan_id", "run_id", "analysis_id", "analysis_artifact", "analysis_revision", "subject", "plan_revision", "objective_refs", "steps", "status", "created_at", "provenance_ref", "artifact_refs", "coverage_matrix"],
+  "required": ["contract", "version", "plan_id", "run_id", "analysis_id", "analysis_artifact", "analysis_revision", "subject", "plan_revision", "objective_refs", "steps", "status", "created_at", "provenance_ref", "artifact_refs", "coverage_matrix", "feasibility"],
   "properties": {
     "contract": { "const": "atg.plan" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
@@ -12,7 +12,7 @@
     "run_id": { "$ref": "common.schema.json#/$defs/id" },
     "analysis_id": { "$ref": "common.schema.json#/$defs/id" },
     "analysis_artifact": { "$ref": "common.schema.json#/$defs/artifact" },
-    "analysis_revision": { "type": "integer", "minimum": 1 },
+    "analysis_revision": { "type": "integer", "minimum": 0 },
     "subject": { "$ref": "common.schema.json#/$defs/identity" },
     "plan_revision": { "type": "integer", "minimum": 1 },
     "supersedes": { "$ref": "common.schema.json#/$defs/id" },

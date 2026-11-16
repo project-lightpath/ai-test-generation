@@ -166,7 +166,7 @@ class RunStateTests(unittest.TestCase):
             state.apply(event("run-1", "e1", 0, "return_to_plan", reason="feedback", feedback_id="feedback-1"))
 
     def test_generation_completion_requires_started_generation_and_identity(self):
-        state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z")
+        state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z", active_plan_id="plan-1", active_plan_revision=1, active_plan_artifact_id="artifact-plan-1", active_plan_artifact_digest="sha256:" + "a" * 64)
         with self.assertRaises(InvalidTransitionError):
             state.apply(event("run-1", "e1", 0, "generation_completed", generation_id="generation-1", artifact_id="artifact-1", artifact_digest="sha256:" + "b" * 64))
         state = state.apply(event("run-1", "e1", 0, "generation_started", generation_id="generation-1")).state
@@ -343,7 +343,7 @@ class RunStateTests(unittest.TestCase):
                 authorization_ref="approval-policy-1", reason="plan is out of scope",
             )
         ).state
-        self.assertEqual(state.status, "blocked")
+        self.assertEqual(state.status, "rejected")
         self.assertEqual(state.terminal_reason, "plan is out of scope")
 
     def test_unknown_event_and_wrong_run_are_rejected(self):

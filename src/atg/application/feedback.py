@@ -7,6 +7,7 @@ import hashlib
 import json
 
 from atg.domain.schema_validation import validate_contract_document
+from atg.domain.digests import require_sha256_digest
 from atg.domain.run_state import validate_identifier, validate_timestamp
 
 
@@ -36,8 +37,7 @@ class FeedbackRequest:
             validate_identifier(getattr(self, field), field)
         if self.plan_revision < 1:
             raise ValueError("plan_revision must be positive")
-        if not self.plan_artifact_digest.startswith("sha256:"):
-            raise ValueError("plan_artifact_digest must be a sha256 digest")
+        require_sha256_digest(self.plan_artifact_digest, "plan_artifact_digest")
         validate_timestamp(self.created_at, "created_at")
         if not self.message:
             raise ValueError("feedback message is required")
@@ -45,7 +45,7 @@ class FeedbackRequest:
     def digest(self) -> str:
         """Return an idempotency digest for the feedback request."""
         payload = self.__dict__.copy()
-        return "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        return "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     def to_document(self) -> dict[str, object]:
         """Serialize canonical feedback content."""

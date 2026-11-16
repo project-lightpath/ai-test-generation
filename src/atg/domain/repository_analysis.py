@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import PurePosixPath
+from atg.domain.digests import require_sha256_digest
 
 
 FACT_ORIGINS = frozenset({"supplied", "discovered", "inferred"})
@@ -37,8 +38,8 @@ class RepositorySubject:
         """Require stable repository and revision identities."""
         if not self.repository_id or not self.revision:
             raise ValueError("repository subject requires repository_id and revision")
-        if self.content_digest is not None and not self.content_digest.startswith("sha256:"):
-            raise ValueError("repository content_digest must be a sha256 digest")
+        if self.content_digest is not None:
+            require_sha256_digest(self.content_digest, "repository content_digest")
 
 
 @dataclass(frozen=True)

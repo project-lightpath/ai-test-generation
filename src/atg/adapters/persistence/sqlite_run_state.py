@@ -483,7 +483,10 @@ class SQLiteRunStateStore:
             (json.dumps(checkpoint, sort_keys=True), event.checkpoint_id),
         )
         if checkpoint.get("kind") == "plan_review":
-            plan_id = checkpoint.get("reviewed_artifact", {}).get("artifact_id", "").removeprefix("artifact-")
+            artifact_id = checkpoint.get("reviewed_artifact", {}).get("artifact_id", "")
+            if not artifact_id.startswith("artifact-"):
+                return
+            plan_id = artifact_id.removeprefix("artifact-")
             plan_row = self._connection.execute(
                 "SELECT bundle_json FROM plans WHERE plan_id = ?", (plan_id,)
             ).fetchone()
@@ -513,7 +516,10 @@ class SQLiteRunStateStore:
             "UPDATE checkpoints SET document_json = ? WHERE checkpoint_id = ?",
             (json.dumps(checkpoint, sort_keys=True), checkpoint_id),
         )
-        plan_id = checkpoint.get("reviewed_artifact", {}).get("artifact_id", "").removeprefix("artifact-")
+        artifact_id = checkpoint.get("reviewed_artifact", {}).get("artifact_id", "")
+        if not artifact_id.startswith("artifact-"):
+            return
+        plan_id = artifact_id.removeprefix("artifact-")
         plan_row = self._connection.execute("SELECT bundle_json FROM plans WHERE plan_id = ?", (plan_id,)).fetchone()
         if plan_row is not None:
             bundle = json.loads(plan_row["bundle_json"])

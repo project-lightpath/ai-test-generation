@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 from typing import Mapping
+from atg.domain.digests import require_sha256_digest
 
 
 class RunStateError(ValueError):
@@ -51,7 +52,7 @@ DECISIONS = frozenset({"approved", "rejected", "blocked", "stated_gap"})
 STATE_STATUSES = frozenset({
     "requested", "admitted", "analyzing", "analysis_review", "plan_review", "planning",
     "code_review", "coding", "execution_review", "executing", "quality_review",
-    "completed", "blocked", "inconclusive", "stated_gap", "cancelled",
+    "completed", "blocked", "rejected", "inconclusive", "stated_gap", "cancelled",
 })
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
@@ -113,10 +114,16 @@ class RunEvent:
             validate_identifier(self.feedback_id, "feedback_id")
         if self.plan_revision is not None and (not isinstance(self.plan_revision, int) or self.plan_revision < 1):
             raise InvalidEventError("plan_revision must be a positive integer")
-        if self.plan_artifact_digest is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.plan_artifact_digest):
-            raise InvalidEventError("plan_artifact_digest must be a sha256 digest")
-        if self.artifact_digest is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", self.artifact_digest):
-            raise InvalidEventError("artifact_digest must be a sha256 digest")
+        if self.plan_artifact_digest is not None:
+            try:
+                require_sha256_digest(self.plan_artifact_digest, "plan_artifact_digest")
+            except ValueError as exc:
+                raise InvalidEventError(str(exc)) from exc
+        if self.artifact_digest is not None:
+            try:
+                require_sha256_digest(self.artifact_digest, "artifact_digest")
+            except ValueError as exc:
+                raise InvalidEventError(str(exc)) from exc
         for field_name in ("actor_role", "reason"):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, str):
@@ -182,7 +189,7 @@ class RunState:
     terminal_reason: str | None = None
     admission_blocked: bool = False
 
-    _TERMINAL = frozenset({"completed", "blocked", "inconclusive", "stated_gap", "cancelled"})
+    _TERMINAL = frozenset({"completed", "blocked", "rejected", "inconclusive", "stated_gap", "cancelled"})
     _CHECKPOINT_STATUSES = {
         "analysis_review": "analysis_review",
         "plan_review": "plan_review",
@@ -222,7 +229,7 @@ class RunState:
         "quality_blocked": {"quality_review": "blocked"},
         "quality_inconclusive": {"quality_review": "inconclusive"},
         "quality_gap": {"quality_review": "stated_gap"},
-        "retry_requested": {"blocked": "admitted", "inconclusive": "admitted"},
+        "retry_requested": {"blocked": "admitted", "rejected": "admitted", "inconclusive": "admitted"},
         "return_to_analyze": {"analyzing": "analyzing", "analysis_review": "analyzing", "planning": "analyzing", "plan_review": "analyzing", "coding": "analyzing", "code_review": "analyzing", "executing": "analyzing", "execution_review": "analyzing", "quality_review": "analyzing"},
         "return_to_plan": {"planning": "planning", "plan_review": "planning", "coding": "planning", "code_review": "planning", "executing": "planning", "execution_review": "planning", "quality_review": "planning"},
         "return_to_code": {"coding": "coding", "code_review": "coding", "executing": "coding", "execution_review": "coding", "quality_review": "coding"},
@@ -254,7 +261,7 @@ class RunState:
             )
         if self.updated_at and _parse_timestamp(event.occurred_at) < _parse_timestamp(self.updated_at):
             raise InvalidTransitionError("event occurred_at cannot precede the current updated_at")
-        retrying = event.event_type == "retry_requested" and self.status in {"blocked", "inconclusive"} and not self.admission_blocked
+        retrying = event.event_type == "retry_requested" and self.status in {"blocked", "rejected", "inconclusive"} and not self.admission_blocked
         if self.status in self._TERMINAL and not retrying:
             raise InvalidTransitionError(f"run is terminal: {self.status}")
 
@@ -287,6 +294,11 @@ class RunState:
             if event.event_type == "generation_completed":
                 if not self.generation_in_progress or event.generation_id != self.active_generation_id:
                     raise InvalidTransitionError("generation_completed must follow its generation_started event")
+            if event.event_type == "generation_started":
+                if self.active_plan_id is None:
+                    raise InvalidTransitionError("generation_started requires an active approved plan")
+                if event.plan_id is not None and event.plan_id != self.active_plan_id:
+                    raise InvalidTransitionError("generation_started plan does not match the active plan")
             if event.event_type == "plan_submitted" and self.active_plan_revision is not None and event.plan_revision <= self.active_plan_revision:
                 raise InvalidTransitionError("plan revision must supersede the active plan revision")
             clear_checkpoint = event.event_type == "retry_requested" or event.event_type.startswith("return_to_") or next_status in self._TERMINAL
@@ -454,7 +466,7 @@ class RunState:
                 raise InvalidTransitionError("active checkpoint has an invalid review status")
             reason = None
         else:
-            next_status = "blocked" if event.decision == "rejected" else event.decision
+            next_status = event.decision
             reason = event.reason
         return self._replace(
             event,
@@ -547,10 +559,10 @@ class RunState:
                 validate_identifier(document[field_name], field_name)
         if document.get("active_plan_revision") is not None and (not isinstance(document["active_plan_revision"], int) or document["active_plan_revision"] < 1):
             raise ValueError("active_plan_revision must be a positive integer")
-        if document.get("active_plan_artifact_digest") is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", document["active_plan_artifact_digest"]):
-            raise ValueError("active_plan_artifact_digest must be a sha256 digest")
-        if document.get("completed_generation_artifact_digest") is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", document["completed_generation_artifact_digest"]):
-            raise ValueError("completed_generation_artifact_digest must be a sha256 digest")
+        if document.get("active_plan_artifact_digest") is not None:
+            require_sha256_digest(document["active_plan_artifact_digest"], "active_plan_artifact_digest")
+        if document.get("completed_generation_artifact_digest") is not None:
+            require_sha256_digest(document["completed_generation_artifact_digest"], "completed_generation_artifact_digest")
         if not isinstance(document.get("generation_in_progress", False), bool):
             raise ValueError("generation_in_progress must be a boolean")
         for key in fingerprints:
@@ -619,13 +631,13 @@ class RunState:
 
 def event_fingerprint(event: RunEvent) -> str:
     """Return the SHA-256 fingerprint of an event payload."""
-    legacy_optional = {
+    optional_payload_fields = {
         "plan_id", "plan_revision", "plan_artifact_id", "plan_artifact_digest",
         "feedback_id", "generation_id", "artifact_id", "artifact_digest",
     }
     values = {
         key: value for key, value in event.__dict__.items()
-        if key not in legacy_optional or value is not None
+        if key not in optional_payload_fields or value is not None
     }
     payload = json.dumps(values, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
