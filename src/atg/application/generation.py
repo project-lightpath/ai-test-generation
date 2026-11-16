@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import threading
@@ -55,6 +55,7 @@ class GenerationRequest:
     model: Mapping[str, object]
     tool: Mapping[str, object]
     worker: Mapping[str, object]
+    base_files: Mapping[str, str] = field(default_factory=dict)
     repair_candidates: tuple[PatchCandidate, ...] = ()
 
     def __post_init__(self) -> None:
@@ -71,6 +72,7 @@ class GenerationRequest:
         if not isinstance(self.patch_text, str) or not self.patch_text:
             raise ValueError("patch_text is required")
         _validate_materialized_files(self.materialized_files)
+        _validate_materialized_files(self.base_files, allow_empty=True)
         for identity in ("base", "candidate", "model", "tool", "worker"):
             validate_identity(getattr(self, identity), identity)
         if len(self.repair_candidates) > 2:
@@ -79,11 +81,15 @@ class GenerationRequest:
             if not isinstance(candidate, PatchCandidate):
                 raise ValueError("repair_candidates must contain PatchCandidate values")
             _validate_materialized_files(candidate.materialized_files)
+            _validate_materialized_files(candidate.base_files, allow_empty=True)
 
     @property
     def candidates(self) -> tuple[PatchCandidate, ...]:
         """Return the initial output followed by bounded repairs."""
-        return (PatchCandidate(self.patch_text, self.materialized_files), *self.repair_candidates)
+        return (
+            PatchCandidate(self.patch_text, self.materialized_files, self.base_files),
+            *self.repair_candidates,
+        )
 
     def digest(self) -> str:
         """Bind every material input that can affect generated output."""
@@ -103,6 +109,7 @@ class GenerationRequest:
                 {
                     "patch_digest": compute_patch_digest(candidate.patch_text),
                     "materialized_digest": compute_materialized_digest(candidate.materialized_files),
+                    "base_digest": compute_materialized_digest(candidate.base_files),
                 }
                 for candidate in self.candidates
             ],
@@ -177,7 +184,11 @@ class GenerationService:
                 raise InvalidTransitionError(
                     f"generation requires coding state, got {state.status}"
                 )
-            if state.revision != request.expected_revision:
+            is_resume = state.generation_in_progress and state.active_generation_id == request.generation_id
+            if is_resume:
+                if state.revision != request.expected_revision + 1:
+                    raise StaleEventError("in-progress generation revision no longer matches request")
+            elif state.revision != request.expected_revision:
                 raise StaleEventError(
                     f"event expects revision {request.expected_revision}, current revision is {state.revision}"
                 )
@@ -194,16 +205,66 @@ class GenerationService:
                 for target in objective.get("target_refs", [])
             )
             allowed_paths = tuple(plan.manifest.get("allowed_paths", []))
-            attempts: list[dict[str, object]] = []
-            artifacts: list[dict[str, object]] = []
-            feedback: tuple[str, ...] = ()
-            input_digest = str(state.active_plan_artifact_digest)
+            started = RunEvent(
+                f"{request.generation_id}-started",
+                request.run_id,
+                "generation_started",
+                request.expected_revision,
+                request.created_at,
+                generation_id=request.generation_id,
+                plan_id=request.plan_id,
+            )
+            if not is_resume:
+                self._store.apply(started)
+            elif started.event_id not in state.processed_event_ids:
+                raise GenerationConflictError("in-progress generation is missing its start event")
+            state = self._store.get_run(request.run_id)
+            attempts, artifacts = self._store.get_generation_attempts(
+                request.generation_id, request.digest()
+            )
+            attempts = list(attempts)
+            artifacts = list(artifacts)
+            feedback = tuple(
+                check.get("detail", f"{check['name']} check failed")
+                for check in attempts[-1].get("checks", [])
+                if check.get("status") == "fail"
+            ) if attempts else ()
+            input_digest = (
+                "sha256:" + hashlib.sha256(json.dumps(
+                    {"output_digest": attempts[-1]["output_digest"], "findings": feedback},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()).hexdigest()
+                if attempts else str(state.active_plan_artifact_digest)
+            )
             final_candidate: PatchCandidate | None = None
             final_patch_digest: str | None = None
             final_materialized_digest: str | None = None
-            final_status = "rejected"
+            final_status = attempts[-1]["status"] if attempts else "rejected"
+            changed_files = tuple(attempts[-1].get("changed_files", [])) if attempts else ()
+            if attempts:
+                final_patch = next(
+                    item["content"] for item in artifacts
+                    if item["artifact"]["artifact_id"] == attempts[-1]["patch_artifact_id"]
+                )
+                final_files = next(
+                    item["content"] for item in artifacts
+                    if item["artifact"]["artifact_id"] == attempts[-1]["materialized_artifact_id"]
+                )
+                final_candidate = PatchCandidate(final_patch, final_files)
+                final_patch_digest = str(attempts[-1]["output_digest"])
+                final_materialized_digest = compute_materialized_digest(final_files)
 
-            for attempt_number in range(1, self.MAX_ATTEMPTS + 1):
+            stop_after_existing = bool(
+                attempts
+                and (
+                    attempts[-1]["status"] == "verified"
+                    or any(check["name"] == "approved_path" and check["status"] == "fail" for check in attempts[-1]["checks"])
+                )
+            )
+            start_attempt = len(attempts) + 1
+            attempt_numbers = () if stop_after_existing else range(start_attempt, self.MAX_ATTEMPTS + 1)
+            for attempt_number in attempt_numbers:
                 candidate = self._generator.generate(request, attempt_number, feedback)
                 if candidate is None:
                     break
@@ -213,11 +274,13 @@ class GenerationService:
                 path_error = None
                 try:
                     changed_files = validate_candidate_paths(
-                        candidate.patch_text, candidate.materialized_files, allowed_paths
+                        candidate.patch_text, candidate.materialized_files, allowed_paths,
+                        candidate.base_files,
                     )
                 except ValueError as exc:
                     changed_files = tuple(candidate.materialized_files)
                     path_error = str(exc)
+                    changed_files = ()
                 validation = self._validator.validate(candidate)
                 status, feedback, checks = evaluate_generation(
                     candidate, validation, target_refs, path_error
@@ -238,6 +301,7 @@ class GenerationService:
                     "output_digest": patch_digest,
                     "patch_artifact_id": patch_artifact["artifact"]["artifact_id"],
                     "materialized_artifact_id": materialized_artifact["artifact"]["artifact_id"],
+                    "changed_files": list(changed_files),
                     "model": dict(request.model),
                     "tool": dict(request.tool),
                     "worker": dict(request.worker),
@@ -283,6 +347,10 @@ class GenerationService:
                 "candidate": dict(request.candidate),
                 "patch_digest": final_patch_digest,
                 "materialized_test_digest": final_materialized_digest,
+                "subject_materializations": [
+                    {"subject": dict(request.base), "test_digest": final_materialized_digest},
+                    {"subject": dict(request.candidate), "test_digest": final_materialized_digest},
+                ],
                 "status": final_status,
                 "created_at": request.created_at,
                 "model": dict(request.model),
@@ -298,27 +366,12 @@ class GenerationService:
                     }
                 ],
             }
-            try:
-                final_changed_files = validate_candidate_paths(
-                    final_candidate.patch_text, final_candidate.materialized_files, allowed_paths
-                )
-            except ValueError:
-                final_changed_files = ()
-            if final_changed_files:
-                manifest["changed_files"] = list(final_changed_files)
+            if changed_files:
+                manifest["changed_files"] = list(changed_files)
             record = GenerationRecord(
                 request.digest(), manifest, tuple(artifacts), tuple(attempts)
             )
             validate_generation_record(record, plan.manifest)
-            started = RunEvent(
-                f"{request.generation_id}-started",
-                request.run_id,
-                "generation_started",
-                request.expected_revision,
-                request.created_at,
-                generation_id=request.generation_id,
-                plan_id=request.plan_id,
-            )
             terminal_type = {
                 "verified": "generation_completed",
                 "rejected": "generation_rejected",
@@ -328,7 +381,7 @@ class GenerationService:
                 f"{request.generation_id}-{terminal_type}",
                 request.run_id,
                 terminal_type,
-                request.expected_revision + 1,
+                state.revision,
                 request.created_at,
                 generation_id=request.generation_id,
                 artifact_id=attempts[-1]["patch_artifact_id"] if final_status == "verified" else None,
@@ -397,8 +450,12 @@ def _artifact(artifact_id: str, media_type: str, content: object) -> dict[str, o
     }
 
 
-def _validate_materialized_files(files: object) -> None:
-    if not isinstance(files, Mapping) or not files:
-        raise ValueError("materialized_files must be a non-empty object")
+def _validate_materialized_files(files: object, *, allow_empty: bool = False) -> None:
+    if not isinstance(files, Mapping) or (not files and not allow_empty):
+        raise ValueError("file content must be a non-empty object")
     if not all(isinstance(path, str) and isinstance(content, str) for path, content in files.items()):
-        raise ValueError("materialized_files must map paths to text content")
+        raise ValueError("file content must map paths to text content")
+    if len(files) > 10 or any(len(content.encode()) > 1_000_000 for content in files.values()):
+        raise ValueError("generated file content exceeds bounds")
+    if sum(len(content.encode()) for content in files.values()) > 5_000_000:
+        raise ValueError("generated file content exceeds total byte limit")

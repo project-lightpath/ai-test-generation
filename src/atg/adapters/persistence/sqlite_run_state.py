@@ -381,6 +381,12 @@ class SQLiteRunStateStore:
                         raise GenerationConflictError("generation attempt identity is bound to different inputs")
                     self._connection.execute("COMMIT")
                     return
+                highest = self._connection.execute(
+                    "SELECT COALESCE(MAX(attempt), 0) AS highest FROM generation_attempts WHERE generation_id = ?",
+                    (generation_id,),
+                ).fetchone()["highest"]
+                if attempt_number != highest + 1 or attempt_number > 3:
+                    raise GenerationConflictError("generation attempts must be sequential and bounded")
                 self._connection.execute(
                     "INSERT INTO generation_attempts(generation_id, attempt, run_id, request_digest, document_json, artifacts_json) VALUES (?, ?, ?, ?, ?, ?)",
                     (generation_id, attempt_number, run_id, request_digest, document_json, artifacts_json),
@@ -389,6 +395,27 @@ class SQLiteRunStateStore:
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
+
+    def get_generation_attempts(
+        self, generation_id: str, request_digest: str
+    ) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
+        """Load ordered attempt checkpoints for safe generation recovery."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT attempt, request_digest, document_json, artifacts_json FROM generation_attempts WHERE generation_id = ? ORDER BY attempt",
+                (generation_id,),
+            ).fetchall()
+        if any(row["request_digest"] != request_digest for row in rows):
+            raise GenerationConflictError("generation attempts are bound to different inputs")
+        if [row["attempt"] for row in rows] != list(range(1, len(rows) + 1)):
+            raise ContractValidationError("persisted generation attempts are not sequential")
+        attempts = tuple(json.loads(row["document_json"]) for row in rows)
+        artifacts = tuple(
+            artifact
+            for row in rows
+            for artifact in json.loads(row["artifacts_json"])
+        )
+        return attempts, artifacts
 
     def record_generation(
         self,

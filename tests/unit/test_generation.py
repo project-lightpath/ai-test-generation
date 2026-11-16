@@ -16,6 +16,7 @@ from atg.application.generation import (
 )
 from atg.application.planning import PlanningRequest, PlanningService
 from atg.domain.schema_validation import ContractValidationError
+from atg.domain.generation import canonical_patch
 from atg.domain.run_state import RunEvent
 from atg.ports.generation import PatchCandidate
 from tests.unit.test_analysis import (
@@ -68,8 +69,8 @@ def prepare_coding_store(root: pathlib.Path, database=":memory:"):
 
 def candidate(content=None, path="tests/test_generated.py"):
     content = content or "def test_target_handler():\n    # target-handler\n    actual = target_handler()\n    assert actual == 2\n"
-    patch = f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n+{content.replace(chr(10), chr(10) + '+')}"
-    return PatchCandidate(patch, {path: content})
+    files = {path: content}
+    return PatchCandidate(canonical_patch({}, files), files)
 
 
 def request(state, generation_id="generation-1", first=None, repairs=(), key="generation-key"):
@@ -201,6 +202,34 @@ class GenerationServiceTests(unittest.TestCase):
                 request(store.get_run("run-1"), first=bad, repairs=(good,))
             )
             self.assertEqual(record.manifest["status"], "verified")
+            store.close()
+
+    def test_process_restart_resumes_after_persisted_attempt(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            bad = candidate("def test_target_handler():\n    # target-handler\n    value = 1\n")
+            good = candidate()
+            req = request(store.get_run("run-1"), first=bad, repairs=(good,))
+
+            class FailingAttemptStore:
+                def __getattr__(self, name):
+                    return getattr(store, name)
+
+                def record_generation_attempt(self, *args, **kwargs):
+                    store.record_generation_attempt(*args, **kwargs)
+                    raise RuntimeError("simulated process interruption")
+
+            with self.assertRaisesRegex(RuntimeError, "interruption"):
+                GenerationService(FailingAttemptStore()).generate(req)
+            self.assertTrue(store.get_run("run-1").generation_in_progress)
+            self.assertEqual(len(store.get_generation_attempts("generation-1", req.digest())[0]), 1)
+
+            recovered = GenerationService(store).generate(req)
+            self.assertEqual(recovered.manifest["status"], "verified")
+            self.assertEqual(len(recovered.attempts), 2)
+            self.assertEqual(store.replay("run-1").completed_generation_id, "generation-1")
             store.close()
 
     def test_three_failed_attempts_are_inconclusive(self):

@@ -46,7 +46,7 @@ ANALYSIS_FIELDS = frozenset({
 })
 PLAN_FIELDS = frozenset({"plan_id", "analysis_id", "run_id", "expected_revision", "occurred_at"})
 FEEDBACK_FIELDS = frozenset({"feedback_id", "run_id", "plan_revision", "plan_artifact_digest", "checkpoint_id", "created_at", "message", "category", "severity", "actor_id"})
-GENERATION_FIELDS = frozenset({"generation_id", "plan_id", "run_id", "expected_revision", "created_at", "patch_text", "materialized_files", "base", "candidate", "model", "tool", "worker", "repair_candidates"})
+GENERATION_FIELDS = frozenset({"generation_id", "plan_id", "run_id", "expected_revision", "created_at", "patch_text", "materialized_files", "base_files", "base", "candidate", "model", "tool", "worker", "repair_candidates"})
 DECISION_FIELDS = frozenset({"run_id", "expected_revision", "occurred_at", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref", "reason"})
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
@@ -496,7 +496,7 @@ def create_server(
                     try:
                         validate_identifier(idempotency_key, "Idempotency-Key")
                         repair_candidates = tuple(
-                            PatchCandidate(candidate["patch_text"], candidate["materialized_files"])
+                            PatchCandidate(candidate["patch_text"], candidate["materialized_files"], candidate.get("base_files", {}))
                             for candidate in body.get("repair_candidates", [])
                         )
                         request = GenerationRequest(
@@ -505,6 +505,7 @@ def create_server(
                             idempotency_key=idempotency_key, patch_text=body["patch_text"],
                             materialized_files=body["materialized_files"], base=body["base"], candidate=body["candidate"],
                             model=body["model"], tool=body["tool"], worker=body["worker"],
+                            base_files=body.get("base_files", {}),
                             repair_candidates=repair_candidates,
                         )
                     except (KeyError, TypeError, ValueError) as exc:

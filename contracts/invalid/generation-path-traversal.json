@@ -12,6 +12,10 @@
   "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "candidate-001"},
   "patch_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "materialized_test_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "subject_materializations": [
+    {"subject": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "test_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"subject": {"kind": "git-tree", "id": "candidate-tree", "version": "candidate-001"}, "test_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+  ],
   "changed_files": ["tests/../src/main/App.java"],
   "status": "verified",
   "created_at": "2026-11-03T17:03:00Z",
@@ -24,6 +28,7 @@
     "output_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "patch_artifact_id": "artifact-generation-invalid-patch",
     "materialized_artifact_id": "artifact-generation-invalid-tests",
+    "changed_files": ["tests/../src/main/App.java"],
     "model": {"kind": "model", "id": "approved-model", "version": "1"},
     "tool": {"kind": "generation-tool", "id": "bounded-generator", "version": "1"},
     "worker": {"kind": "worker", "id": "worker-001", "version": "1"},

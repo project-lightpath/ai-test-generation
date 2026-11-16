@@ -6,6 +6,7 @@ import hashlib
 import json
 import posixpath
 import re
+import difflib
 from typing import Mapping
 
 from atg.domain.digests import digests_equal, require_sha256_digest
@@ -25,6 +26,39 @@ def compute_materialized_digest(files: Mapping[str, str]) -> str:
     """Bind the exact path-to-content mapping used by execution."""
     encoded = json.dumps(dict(files), sort_keys=True, separators=(",", ":")).encode()
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def canonical_patch(base_files: Mapping[str, str], materialized_files: Mapping[str, str]) -> str:
+    """Render the deterministic git-style patch for the exact file contents."""
+    parts: list[str] = []
+    for path in sorted(materialized_files):
+        before = base_files.get(path)
+        after = materialized_files[path]
+        if before == after:
+            continue
+        created = before is None
+        parts.append(f"diff --git a/{path} b/{path}\n")
+        if created:
+            parts.append("new file mode 100644\n")
+        old_lines = before.splitlines(keepends=True) if before is not None else []
+        new_lines = after.splitlines(keepends=True)
+        if old_lines and not old_lines[-1].endswith(("\n", "\r")):
+            old_lines[-1] += "\n"
+        if new_lines and not new_lines[-1].endswith(("\n", "\r")):
+            new_lines[-1] += "\n"
+        from_name = "/dev/null" if created else f"a/{path}"
+        to_name = f"b/{path}"
+        parts.extend(
+            difflib.unified_diff(
+                old_lines,
+                new_lines,
+                fromfile=from_name,
+                tofile=to_name,
+                n=3,
+                lineterm="\n",
+            )
+        )
+    return "".join(parts)
 
 
 def derive_patch_paths(patch: str) -> tuple[str, ...]:
@@ -81,12 +115,15 @@ def validate_candidate_paths(
     patch: str,
     materialized_files: Mapping[str, str],
     allowed_roots: tuple[str, ...],
+    base_files: Mapping[str, str] | None = None,
 ) -> tuple[str, ...]:
     """Require patch headers, materialized files, and approved paths to agree."""
     patch_paths = derive_patch_paths(patch)
     materialized_paths = tuple(materialized_files)
     if set(patch_paths) != set(materialized_paths):
         raise ValueError("patch paths differ from materialized test files")
+    if patch != canonical_patch(base_files or {}, materialized_files):
+        raise ValueError("patch content differs from materialized test files")
     return validate_changed_files(materialized_paths, allowed_roots)
 
 
@@ -137,6 +174,19 @@ def validate_generation_manifest(
         )
         if not manifest.get("attempts") or not manifest.get("artifacts"):
             raise ValueError("successful generation requires attempts and artifacts")
+    subjects = manifest.get("subject_materializations", [])
+    expected_subjects = {json.dumps(manifest.get(field), sort_keys=True) for field in ("base", "candidate")}
+    actual_subjects = {
+        json.dumps(item.get("subject"), sort_keys=True)
+        for item in subjects
+        if isinstance(item, Mapping)
+    }
+    if actual_subjects != expected_subjects or any(
+        not digests_equal(item.get("test_digest"), manifest.get("materialized_test_digest"))
+        for item in subjects
+        if isinstance(item, Mapping)
+    ):
+        raise ValueError("generation subject materialization digests do not match base and candidate")
 
 
 def validate_artifact_bundle(

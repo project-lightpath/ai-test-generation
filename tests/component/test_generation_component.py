@@ -12,6 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 from atg.component.run_state_server import create_server
 from atg.adapters.generation.deterministic import DeterministicValidationAdapter
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
+from atg.domain.generation import canonical_patch
 from atg.domain.repository_analysis import RepositorySubject
 from atg.ports.repository import RepositoryContextRequest
 
@@ -87,7 +88,8 @@ class GenerationHTTPTests(unittest.TestCase):
     def test_generation_http_creates_and_retrieves(self):
         run = self.prepare_coding()
         content = "def test_target_handler():\n    # target-handler\n    actual = target_handler()\n    assert actual == 42\n"
-        body = {"generation_id": "gen-http-1", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": "diff --git a/tests/test_generated.py b/tests/test_generated.py\n--- /dev/null\n+++ b/tests/test_generated.py\n+" + content.replace("\n", "\n+"), "materialized_files": {"tests/test_generated.py": content}, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        files = {"tests/test_generated.py": content}
+        body = {"generation_id": "gen-http-1", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
         status, doc = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-key"})
         self.assertEqual(status, 201)
         self.assertEqual(doc["manifest"]["generation_id"], "gen-http-1")
@@ -103,7 +105,8 @@ class GenerationHTTPTests(unittest.TestCase):
     def test_generation_rejects_bad_path(self):
         run = self.prepare_coding()
         content = "def test_target_handler():\n    # target-handler\n    assert True\n"
-        body = {"generation_id": "gen-http-2", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": "diff --git a/src/main/app.py b/src/main/app.py\n--- /dev/null\n+++ b/src/main/app.py\n+" + content.replace("\n", "\n+"), "materialized_files": {"src/main/app.py": content}, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        files = {"src/main/app.py": content}
+        body = {"generation_id": "gen-http-2", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
         status, document = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-bad-path"})
         self.assertEqual(status, 201)
         self.assertEqual(document["manifest"]["status"], "rejected")
@@ -111,14 +114,16 @@ class GenerationHTTPTests(unittest.TestCase):
     def test_generation_requires_approved_plan(self):
         self.request("POST", "/runs", {"run_id": "run-http-gen", "created_at": "2099-11-09T20:00:00Z"})
         content = "def test_target_handler():\n    assert value == 1\n"
-        body = {"generation_id": "gen-http-3", "plan_id": "plan-missing", "run_id": "run-http-gen", "expected_revision": 0, "created_at": "2099-11-09T20:04:00Z", "patch_text": "diff --git a/tests/test_generated.py b/tests/test_generated.py\n--- /dev/null\n+++ b/tests/test_generated.py\n+" + content.replace("\n", "\n+"), "materialized_files": {"tests/test_generated.py": content}, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        files = {"tests/test_generated.py": content}
+        body = {"generation_id": "gen-http-3", "plan_id": "plan-missing", "run_id": "run-http-gen", "expected_revision": 0, "created_at": "2099-11-09T20:04:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
         status, _ = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-missing-plan"})
         self.assertEqual(status, 409)
 
     def test_generation_requires_idempotency_key(self):
         run = self.prepare_coding()
         content = "def test_target_handler():\n    # target-handler\n    assert value == 1\n"
-        body = {"generation_id": "gen-http-4", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": "diff --git a/tests/test_generated.py b/tests/test_generated.py\n--- /dev/null\n+++ b/tests/test_generated.py\n+" + content.replace("\n", "\n+"), "materialized_files": {"tests/test_generated.py": content}, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        files = {"tests/test_generated.py": content}
+        body = {"generation_id": "gen-http-4", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
         status, document = self.request("POST", "/generations", body)
         self.assertEqual(status, 400)
         self.assertIn("Idempotency-Key", document["error"])
