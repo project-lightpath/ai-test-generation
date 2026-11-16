@@ -437,12 +437,12 @@ def create_server(
                         validate_timestamp(body["occurred_at"], "occurred_at")
                     except ValueError as exc:
                         raise BadRequestError(str(exc)) from exc
+                    checkpoint = store.get_checkpoint(parts[1])
+                    if checkpoint is None:
+                        raise PlanningConflictError("checkpoint not found")
+                    if checkpoint.get("run_id") != body["run_id"]:
+                        raise PlanningConflictError("checkpoint does not belong to run")
                     try:
-                        checkpoint = store.get_checkpoint(parts[1])
-                        if checkpoint is None:
-                            raise PlanningConflictError("checkpoint not found")
-                        if checkpoint.get("run_id") != body["run_id"]:
-                            raise PlanningConflictError("checkpoint does not belong to run")
                         event = RunEvent(
                             event_id=f"{body['decision_id']}-event",
                             run_id=body["run_id"],

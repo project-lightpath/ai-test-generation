@@ -172,6 +172,7 @@ class PlanningService:
         manifest = dict(old.manifest)
         manifest.pop("approved_by", None)
         manifest.update({"plan_id": new_id, "plan_revision": feedback.plan_revision + 1, "status": "draft", "supersedes": feedback.plan_id, "feedback_refs": [feedback.feedback_id], "created_at": feedback.created_at})
+        manifest["provenance_ref"] = f"provenance-{new_id}"
         artifact = _artifact(f"artifact-{new_id}", "application/vnd.atg.plan+json", manifest)
         manifest["artifact_refs"] = [artifact["artifact"]["artifact_id"]]
         artifact = _artifact(f"artifact-{new_id}", "application/vnd.atg.plan+json", manifest)
@@ -272,8 +273,10 @@ def validate_plan_record(record: PlanRecord) -> None:
         encoded = json.dumps(stored["content"], sort_keys=True, separators=(",", ":")).encode()
         if metadata["digest"] != "sha256:" + hashlib.sha256(encoded).hexdigest() or metadata["size_bytes"] != len(encoded):
             raise ContractValidationError("plan artifact metadata mismatch")
-        if stored.get("content", {}).get("steps") != record.manifest.get("steps"):
-            raise ContractValidationError("plan artifact steps differ from manifest steps")
+        content = stored.get("content", {})
+        for field, value in record.manifest.items():
+            if field not in {"status", "approved_by"} and content.get(field) != value:
+                raise ContractValidationError(f"plan artifact {field} differs from manifest")
     if record.manifest["artifact_refs"] != list(artifacts):
         raise ContractValidationError("plan artifact references are not closed")
     if record.checkpoint["reviewed_artifact"] != artifacts[f"artifact-{record.manifest['plan_id']}"]:

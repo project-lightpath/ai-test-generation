@@ -206,6 +206,17 @@ class AnalysisHTTPComponentTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("expected_revision", document["error"])
 
+    def test_missing_checkpoint_decision_is_planning_conflict(self):
+        body = {
+            "run_id": "run-http-analysis", "expected_revision": 0,
+            "occurred_at": "2099-11-09T20:05:00Z", "decision": "approved",
+            "decision_id": "decision-missing-checkpoint", "actor_id": "reviewer-1",
+            "actor_role": "owner", "authorization_ref": "auth-1",
+        }
+        status, document = self.request("POST", "/checkpoints/missing-checkpoint/decision", body)
+        self.assertEqual(status, 409)
+        self.assertEqual(document, {"error": "checkpoint not found"})
+
 
 if __name__ == "__main__":
     unittest.main()

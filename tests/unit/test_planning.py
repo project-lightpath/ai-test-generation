@@ -111,6 +111,7 @@ class PlanningServiceTests(unittest.TestCase):
             self.assertEqual(revised.manifest["plan_revision"], 2)
             self.assertEqual(revised.manifest["supersedes"], "plan-1")
             self.assertEqual(revised.manifest["feedback_refs"], ["feedback-1"])
+            self.assertEqual(revised.manifest["provenance_ref"], "provenance-plan-1-r2")
             self.assertEqual(store.get_run("run-1").status, "plan_review")
             self.assertIsNotNone(store.get_feedback("feedback-1"))
             store.close()

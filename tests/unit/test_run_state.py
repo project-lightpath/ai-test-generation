@@ -173,6 +173,19 @@ class RunStateTests(unittest.TestCase):
         state = state.apply(event("run-1", "e2", 1, "generation_completed", generation_id="generation-1", artifact_id="artifact-1", artifact_digest="sha256:" + "b" * 64)).state
         self.assertEqual(state.completed_generation_id, "generation-1")
 
+    def test_generation_restart_clears_previous_completion(self):
+        state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z", active_plan_id="plan-1", active_plan_revision=1, active_plan_artifact_id="artifact-plan-1", active_plan_artifact_digest="sha256:" + "a" * 64)
+        state = state.apply(event("run-1", "e1", 0, "generation_started", generation_id="generation-1")).state
+        state = state.apply(event("run-1", "e2", 1, "generation_completed", generation_id="generation-1", artifact_id="artifact-1", artifact_digest="sha256:" + "b" * 64)).state
+        state = state.apply(event("run-1", "e3", 2, "generation_started", generation_id="generation-2")).state
+        self.assertIsNone(state.completed_generation_id)
+        self.assertTrue(state.generation_in_progress)
+
+    def test_code_review_rejects_in_progress_generation_before_metadata(self):
+        state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z", active_plan_id="plan-1", active_plan_revision=1, active_plan_artifact_id="artifact-plan-1", active_plan_artifact_digest="sha256:" + "a" * 64, generation_in_progress=True)
+        with self.assertRaisesRegex(InvalidTransitionError, "generation is in progress"):
+            state.apply(event("run-1", "e1", 0, "checkpoint_created", checkpoint_id="cp-code", checkpoint_kind="code_review"))
+
     def test_code_review_requires_completed_generation_identity(self):
         state = planning_state()
         state = state.apply(event("run-1", "e2", 1, "checkpoint_created", checkpoint_id="cp-plan", checkpoint_kind="plan_review")).state
@@ -469,6 +482,16 @@ class RunStateTests(unittest.TestCase):
                 self.assertIsNone(result.state.checkpoint_return_status)
                 if event_type == "return_to_plan":
                     self.assertEqual(result.state.active_feedback_id, "feedback-1")
+
+    def test_return_to_analyze_clears_active_plan_for_new_cycle(self):
+        state = RunState(
+            run_id="run-1", status="code_review", revision=0, updated_at="2026-11-03T17:00:00Z",
+            active_plan_id="plan-1", active_plan_revision=2,
+            active_plan_artifact_id="artifact-plan-1", active_plan_artifact_digest="sha256:" + "a" * 64,
+        )
+        result = state.apply(event("run-1", "e1", 0, "return_to_analyze", reason="new analysis", feedback_id=None)).state
+        self.assertIsNone(result.active_plan_id)
+        self.assertIsNone(result.active_plan_revision)
 
 
 if __name__ == "__main__":

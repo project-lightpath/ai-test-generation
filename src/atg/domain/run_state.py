@@ -328,15 +328,30 @@ class RunState:
                         "completed_generation_artifact_digest": event.artifact_digest,
                     }
                     if event.event_type == "generation_completed" else
-                    {"active_generation_id": event.generation_id}
+                    {
+                        "active_generation_id": event.generation_id,
+                        "completed_generation_id": None,
+                        "completed_generation_artifact_id": None,
+                        "completed_generation_artifact_digest": None,
+                    }
                     if event.event_type == "generation_started" else {}
-                    if event.event_type not in {"plan_submitted", "return_to_plan"} else
+                    if event.event_type not in {"plan_submitted", "return_to_plan", "return_to_analyze"} else
                     {
                         "active_generation_id": None,
                         "completed_generation_id": None,
                         "completed_generation_artifact_id": None,
                         "completed_generation_artifact_digest": None,
                     }
+                ),
+                **(
+                    {
+                        "active_plan_id": None,
+                        "active_plan_revision": None,
+                        "active_plan_artifact_id": None,
+                        "active_plan_artifact_digest": None,
+                        "active_feedback_id": None,
+                    }
+                    if event.event_type == "return_to_analyze" else {}
                 ),
                 terminal_reason=(
                     None
@@ -394,12 +409,12 @@ class RunState:
             )
         if event.checkpoint_kind == "plan_review" and self.active_plan_id is None:
             raise InvalidTransitionError("plan_review requires a submitted plan artifact")
+        if event.checkpoint_kind == "code_review" and self.generation_in_progress:
+            raise InvalidTransitionError("code_review cannot begin while generation is in progress")
         if event.checkpoint_kind == "code_review" and not all(
             (self.completed_generation_id, self.completed_generation_artifact_id, self.completed_generation_artifact_digest)
         ):
             raise InvalidTransitionError("code_review requires a completed generation and artifact identity")
-        if event.checkpoint_kind == "code_review" and self.generation_in_progress:
-            raise InvalidTransitionError("code_review cannot begin while generation is in progress")
         if event.checkpoint_id in self.superseded_checkpoint_ids:
             raise InvalidTransitionError("checkpoint id was already superseded")
         if event.checkpoint_id in self.expired_checkpoint_ids:
