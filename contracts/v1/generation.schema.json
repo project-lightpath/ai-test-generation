@@ -22,13 +22,51 @@
     "status": { "enum": ["generated", "verified", "rejected", "inconclusive"] },
     "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
     "model": { "$ref": "common.schema.json#/$defs/identity" },
+    "tool": { "$ref": "common.schema.json#/$defs/identity" },
+    "worker": { "$ref": "common.schema.json#/$defs/identity" },
+    "materialized_test_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+    "attempts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attempt", "input_digest", "output_digest", "patch_artifact_id", "materialized_artifact_id", "model", "tool", "worker", "status", "checks"],
+        "properties": {
+          "attempt": { "type": "integer", "minimum": 1, "maximum": 3 },
+          "input_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+          "output_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+          "patch_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
+          "materialized_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
+          "model": { "$ref": "common.schema.json#/$defs/identity" },
+          "tool": { "$ref": "common.schema.json#/$defs/identity" },
+          "worker": { "$ref": "common.schema.json#/$defs/identity" },
+          "status": { "enum": ["verified", "rejected"] },
+          "checks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "status"],
+              "properties": {
+                "name": { "enum": ["approved_path", "syntax", "format", "compile", "collection", "assertion", "target"] },
+                "status": { "enum": ["pass", "fail"] },
+                "detail": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
     "artifacts": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/artifact" } },
     "limitations": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/limitation" } }
   },
   "allOf": [
     {
       "if": { "properties": { "status": { "enum": ["generated", "verified"] } } },
-      "then": { "required": ["patch_digest", "changed_files"] }
+      "then": { "required": ["patch_digest", "changed_files", "materialized_test_digest", "model", "tool", "worker", "attempts", "artifacts"] }
     }
   ]
 }

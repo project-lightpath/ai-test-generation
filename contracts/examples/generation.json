@@ -11,10 +11,36 @@
   "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"},
   "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "candidate-001"},
   "patch_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "materialized_test_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "changed_files": ["src/test/java/AppTest.java"],
   "status": "verified",
   "created_at": "2026-11-03T17:03:00Z",
   "model": {"kind": "model", "id": "approved-model", "version": "1"},
-  "artifacts": [],
+  "tool": {"kind": "generation-tool", "id": "bounded-generator", "version": "1"},
+  "worker": {"kind": "worker", "id": "worker-001", "version": "1"},
+  "attempts": [{
+    "attempt": 1,
+    "input_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "output_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "patch_artifact_id": "artifact-generation-001-patch-1",
+    "materialized_artifact_id": "artifact-generation-001-tests-1",
+    "model": {"kind": "model", "id": "approved-model", "version": "1"},
+    "tool": {"kind": "generation-tool", "id": "bounded-generator", "version": "1"},
+    "worker": {"kind": "worker", "id": "worker-001", "version": "1"},
+    "status": "verified",
+    "checks": [
+      {"name": "approved_path", "status": "pass"},
+      {"name": "syntax", "status": "pass"},
+      {"name": "format", "status": "pass"},
+      {"name": "compile", "status": "pass"},
+      {"name": "collection", "status": "pass"},
+      {"name": "assertion", "status": "pass"},
+      {"name": "target", "status": "pass"}
+    ]
+  }],
+  "artifacts": [
+    {"artifact_id": "artifact-generation-001-patch-1", "media_type": "text/x-diff", "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"artifact_id": "artifact-generation-001-tests-1", "media_type": "application/vnd.atg.materialized-tests+json", "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+  ],
   "limitations": []
 }

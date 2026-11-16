@@ -181,6 +181,17 @@ class RunStateTests(unittest.TestCase):
         self.assertIsNone(state.completed_generation_id)
         self.assertTrue(state.generation_in_progress)
 
+    def test_generation_failure_clears_in_progress_without_completion(self):
+        for event_type in ("generation_rejected", "generation_inconclusive"):
+            with self.subTest(event_type=event_type):
+                state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z", active_plan_id="plan-1", active_plan_revision=1, active_plan_artifact_id="artifact-plan-1", active_plan_artifact_digest="sha256:" + "a" * 64)
+                state = state.apply(event("run-1", "e1", 0, "generation_started", generation_id="generation-1")).state
+                state = state.apply(event("run-1", "e2", 1, event_type, generation_id="generation-1", reason="validation failed")).state
+                self.assertEqual(state.status, "coding")
+                self.assertFalse(state.generation_in_progress)
+                self.assertIsNone(state.active_generation_id)
+                self.assertIsNone(state.completed_generation_id)
+
     def test_code_review_rejects_in_progress_generation_before_metadata(self):
         state = RunState(run_id="run-1", status="coding", revision=0, updated_at="2026-11-03T17:00:00Z", active_plan_id="plan-1", active_plan_revision=1, active_plan_artifact_id="artifact-plan-1", active_plan_artifact_digest="sha256:" + "a" * 64, generation_in_progress=True)
         with self.assertRaisesRegex(InvalidTransitionError, "generation is in progress"):
