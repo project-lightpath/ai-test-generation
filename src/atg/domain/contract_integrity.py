@@ -7,6 +7,7 @@ between those documents before a run can be published as complete evidence.
 from __future__ import annotations
 
 from typing import Iterable, Mapping
+from atg.domain.digests import digests_equal
 
 
 class ContractIntegrityError(ValueError):
@@ -66,6 +67,13 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                     errors.append("analysis.evidence_refs belongs to a different subject")
             for objective_id in document.get("objective_refs", []):
                 require("atg.objective", objective_id, "analysis.objective_refs")
+            analysis_objectives = set(document.get("objective_refs", []))
+            candidate_objectives = {
+                candidate.get("objective_ref")
+                for candidate in document.get("objective_candidates", [])
+            }
+            if document.get("outcome") not in {"blocked", "inconclusive", "not_evaluable"} and candidate_objectives != analysis_objectives:
+                errors.append("analysis candidates must exhaustively cover analysis objectives")
             provenance = _require_related(document, "atg.provenance", document.get("provenance_ref"), require, errors, "analysis.provenance_ref")
             if provenance is not None:
                 provenance_artifacts = {
@@ -176,7 +184,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                 if plan is not None:
                     if document.get("plan_revision") is not None and document["plan_revision"] != plan.get("plan_revision"):
                         errors.append("feedback plan revision differs from referenced plan")
-                    if document.get("plan_artifact_digest") is not None and document["plan_artifact_digest"] != reviewed.get("digest"):
+                    if document.get("plan_artifact_digest") is not None and not digests_equal(document["plan_artifact_digest"], reviewed.get("digest")):
                         errors.append("feedback plan artifact digest differs from checkpoint")
         if contract == "atg.checkpoint" and document.get("kind") == "analysis_review":
             reviewed = document.get("reviewed_artifact") or {}
@@ -240,7 +248,7 @@ def validate_documents(documents: Iterable[Mapping[str, object]]) -> None:
                     reviewed = checkpoint.get("reviewed_artifact") or {}
                     if checkpoint.get("kind") != "plan_review" or checkpoint.get("state") != "approved":
                         errors.append("generation requires an approved plan review checkpoint")
-                    if reviewed.get("artifact_id") != f"artifact-{plan.get('plan_id')}" or reviewed.get("digest") != document.get("plan_artifact_digest"):
+                    if reviewed.get("artifact_id") != f"artifact-{plan.get('plan_id')}" or not digests_equal(reviewed.get("digest"), document.get("plan_artifact_digest")):
                         errors.append("generation requires the approved plan artifact digest")
                     decision = checkpoint.get("decision") or {}
                     if decision.get("decision_id") != document.get("plan_decision_id"):

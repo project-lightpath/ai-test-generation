@@ -9,6 +9,7 @@ import threading
 from typing import Mapping
 
 from atg.domain.schema_validation import ContractValidationError, validate_contract_document
+from atg.domain.digests import digests_equal
 from atg.domain.run_state import InvalidTransitionError, RunEvent, StaleEventError, validate_identifier, validate_timestamp
 from atg.application.feedback import FeedbackConflictError, FeedbackRequest
 
@@ -165,7 +166,7 @@ class PlanningService:
         approved_artifact = next((artifact["artifact"] for artifact in old.artifacts if artifact["artifact"].get("artifact_id") == f"artifact-{feedback.plan_id}"), None)
         if approved_artifact is None:
             raise FeedbackConflictError("approved plan artifact is missing")
-        if approved_artifact.get("digest") != feedback.plan_artifact_digest:
+        if not digests_equal(approved_artifact.get("digest"), feedback.plan_artifact_digest):
             raise FeedbackConflictError("feedback plan digest does not match the approved plan")
         new_id = f"{feedback.plan_id}-r{feedback.plan_revision + 1}"
         manifest = dict(old.manifest)

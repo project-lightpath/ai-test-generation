@@ -247,8 +247,10 @@ class SQLiteRunStateStore:
                 existing = self._connection.execute("SELECT request_digest FROM feedback WHERE feedback_id = ?", (feedback.feedback_id,)).fetchone()
                 if existing is not None:
                     if existing["request_digest"] != request_digest:
-                        raise PlanningConflictError("feedback identity is bound to different inputs")
+                        raise FeedbackConflictError("feedback identity is bound to different inputs")
                     stored = self.get_plan(record.manifest["plan_id"])
+                    if stored is None:
+                        raise FeedbackConflictError("feedback replay has no persisted successor plan")
                     self._connection.execute("COMMIT")
                     return PlanRecord(stored.request_digest, stored.manifest, stored.checkpoint, stored.provenance, stored.artifacts, True)
                 predecessor = self._connection.execute(

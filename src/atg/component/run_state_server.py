@@ -48,7 +48,7 @@ DECISION_FIELDS = frozenset({"run_id", "expected_revision", "occurred_at", "deci
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
 DIGEST_PATTERN = re.compile(r"^[A-Za-z0-9_-]+:[A-Fa-f0-9]{8,}$")
-SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+SHA256_PATTERN = re.compile(r"^sha256:[A-Fa-f0-9]{64}$")
 FEEDBACK_CATEGORIES = frozenset({"scope_change", "requirement_clarification", "expected_behavior", "excluded_case", "fixture_preference", "safety_constraint", "classification_override", "assertion_correction", "infrastructure", "other"})
 FEEDBACK_SEVERITIES = frozenset({"info", "warning", "error"})
 
@@ -438,6 +438,11 @@ def create_server(
                     except ValueError as exc:
                         raise BadRequestError(str(exc)) from exc
                     try:
+                        checkpoint = store.get_checkpoint(parts[1])
+                        if checkpoint is None:
+                            raise PlanningConflictError("checkpoint not found")
+                        if checkpoint.get("run_id") != body["run_id"]:
+                            raise PlanningConflictError("checkpoint does not belong to run")
                         event = RunEvent(
                             event_id=f"{body['decision_id']}-event",
                             run_id=body["run_id"],
