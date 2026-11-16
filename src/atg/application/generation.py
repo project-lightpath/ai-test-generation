@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import hashlib
 import json
 import threading
 from typing import Mapping
 
-from atg.adapters.generation.deterministic import (
-    DeterministicValidationAdapter,
-    RequestGenerationAdapter,
-)
-from atg.domain.digests import digests_equal
+from atg.adapters.generation.deterministic import DeterministicValidationAdapter
+from atg.domain.digests import digests_equal, require_sha256_digest
 from atg.domain.generation import (
     artifact_digest,
     compute_materialized_digest,
@@ -31,16 +28,20 @@ from atg.domain.run_state import (
 )
 from atg.domain.schema_validation import ContractValidationError, validate_contract_document
 from atg.gates.generation import evaluate_generation
-from atg.ports.generation import PatchCandidate
+from atg.ports.generation import GeneratedCandidate, GenerationProvenance, PatchCandidate
 
 
 class GenerationConflictError(ValueError):
     """Raised when a generation identity or approved plan binding conflicts."""
 
 
+class GenerationAdapterUnavailableError(RuntimeError):
+    """Raised when no generation provider is configured in the composition."""
+
+
 @dataclass(frozen=True)
 class GenerationRequest:
-    """Request containing bounded development candidates and attribution."""
+    """Intent-only request; generated content and provenance come from the port."""
 
     generation_id: str
     plan_id: str
@@ -48,18 +49,12 @@ class GenerationRequest:
     expected_revision: int
     created_at: str
     idempotency_key: str
-    patch_text: str
-    materialized_files: Mapping[str, str]
     base: Mapping[str, object]
     candidate: Mapping[str, object]
-    model: Mapping[str, object]
-    tool: Mapping[str, object]
-    worker: Mapping[str, object]
-    base_files: Mapping[str, str] = field(default_factory=dict)
-    repair_candidates: tuple[PatchCandidate, ...] = ()
+    model_endpoint: Mapping[str, object]
 
     def __post_init__(self) -> None:
-        """Validate identities and bound the caller-supplied development replay."""
+        """Validate intent identities; do not accept model/tool output here."""
         for field in ("generation_id", "plan_id", "run_id", "idempotency_key"):
             validate_identifier(getattr(self, field), field)
         if (
@@ -69,27 +64,8 @@ class GenerationRequest:
         ):
             raise ValueError("expected_revision must be a non-negative integer")
         validate_timestamp(self.created_at, "created_at")
-        if not isinstance(self.patch_text, str) or not self.patch_text:
-            raise ValueError("patch_text is required")
-        _validate_materialized_files(self.materialized_files)
-        _validate_materialized_files(self.base_files, allow_empty=True)
-        for identity in ("base", "candidate", "model", "tool", "worker"):
+        for identity in ("base", "candidate", "model_endpoint"):
             validate_identity(getattr(self, identity), identity)
-        if len(self.repair_candidates) > 2:
-            raise ValueError("repair candidates exceed maximum attempts")
-        for candidate in self.repair_candidates:
-            if not isinstance(candidate, PatchCandidate):
-                raise ValueError("repair_candidates must contain PatchCandidate values")
-            _validate_materialized_files(candidate.materialized_files)
-            _validate_materialized_files(candidate.base_files, allow_empty=True)
-
-    @property
-    def candidates(self) -> tuple[PatchCandidate, ...]:
-        """Return the initial output followed by bounded repairs."""
-        return (
-            PatchCandidate(self.patch_text, self.materialized_files, self.base_files),
-            *self.repair_candidates,
-        )
 
     def digest(self) -> str:
         """Bind every material input that can affect generated output."""
@@ -102,17 +78,7 @@ class GenerationRequest:
             "idempotency_key": self.idempotency_key,
             "base": dict(self.base),
             "candidate": dict(self.candidate),
-            "model": dict(self.model),
-            "tool": dict(self.tool),
-            "worker": dict(self.worker),
-            "candidates": [
-                {
-                    "patch_digest": compute_patch_digest(candidate.patch_text),
-                    "materialized_digest": compute_materialized_digest(candidate.materialized_files),
-                    "base_digest": compute_materialized_digest(candidate.base_files),
-                }
-                for candidate in self.candidates
-            ],
+            "model_endpoint": dict(self.model_endpoint),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return "sha256:" + hashlib.sha256(encoded).hexdigest()
@@ -161,7 +127,7 @@ class GenerationService:
     def __init__(self, store, generator=None, validator=None) -> None:
         self._store = store
         self._lock = threading.RLock()
-        self._generator = generator or RequestGenerationAdapter()
+        self._generator = generator
         self._validator = validator or DeterministicValidationAdapter()
 
     def generate(self, request: GenerationRequest) -> GenerationRecord:
@@ -178,6 +144,8 @@ class GenerationService:
                     existing.attempts,
                     True,
                 )
+            if self._generator is None:
+                raise GenerationAdapterUnavailableError("no generation adapter is configured")
 
             state = self._store.get_run(request.run_id)
             if state.status != "coding":
@@ -242,6 +210,7 @@ class GenerationService:
             final_materialized_digest: str | None = None
             final_status = attempts[-1]["status"] if attempts else "rejected"
             changed_files = tuple(attempts[-1].get("changed_files", [])) if attempts else ()
+            final_provenance = attempts[-1] if attempts else None
             if attempts:
                 final_patch = next(
                     item["content"] for item in artifacts
@@ -265,10 +234,21 @@ class GenerationService:
             start_attempt = len(attempts) + 1
             attempt_numbers = () if stop_after_existing else range(start_attempt, self.MAX_ATTEMPTS + 1)
             for attempt_number in attempt_numbers:
-                candidate = self._generator.generate(request, attempt_number, feedback)
-                if candidate is None:
+                generated = self._generator.generate(request, attempt_number, feedback)
+                if generated is None:
+                    if not attempts and attempt_number == 1:
+                        raise GenerationAdapterUnavailableError(
+                            "generation adapter produced no initial candidate"
+                        )
                     break
+                if not isinstance(generated, GeneratedCandidate):
+                    raise GenerationConflictError("generation adapter returned an invalid candidate")
+                candidate = generated.patch
+                provenance = _validate_generation_provenance(generated, request)
+                _validate_materialized_files(candidate.materialized_files)
+                _validate_materialized_files(candidate.base_files, allow_empty=True)
                 final_candidate = candidate
+                final_provenance = provenance
                 patch_digest = compute_patch_digest(candidate.patch_text)
                 materialized_digest = compute_materialized_digest(candidate.materialized_files)
                 path_error = None
@@ -302,9 +282,7 @@ class GenerationService:
                     "patch_artifact_id": patch_artifact["artifact"]["artifact_id"],
                     "materialized_artifact_id": materialized_artifact["artifact"]["artifact_id"],
                     "changed_files": list(changed_files),
-                    "model": dict(request.model),
-                    "tool": dict(request.tool),
-                    "worker": dict(request.worker),
+                    **provenance,
                     "status": status,
                     "checks": list(checks),
                 }
@@ -331,6 +309,8 @@ class GenerationService:
 
             if final_candidate is None or final_patch_digest is None or final_materialized_digest is None:
                 raise GenerationConflictError("generation produced no candidate")
+            if final_provenance is None:
+                raise GenerationConflictError("generation provenance is missing")
             if final_status != "verified":
                 final_status = (
                     "inconclusive"
@@ -357,9 +337,13 @@ class GenerationService:
                 ],
                 "status": final_status,
                 "created_at": request.created_at,
-                "model": dict(request.model),
-                "tool": dict(request.tool),
-                "worker": dict(request.worker),
+                **{
+                    field: final_provenance[field]
+                    for field in (
+                        "model", "model_endpoint", "tool", "worker", "prompt_digest",
+                        "config_digest", "invocation_digest",
+                    )
+                },
                 "attempts": attempts,
                 "artifacts": [artifact["artifact"] for artifact in artifacts],
                 "limitations": [
@@ -452,6 +436,28 @@ def _artifact(artifact_id: str, media_type: str, content: object) -> dict[str, o
         },
         "content": content,
     }
+
+
+def _validate_generation_provenance(
+    generated: GeneratedCandidate, request: GenerationRequest
+) -> dict[str, object]:
+    """Validate adapter-attested identities and non-secret invocation digests."""
+    provenance = generated.provenance
+    if not isinstance(provenance, GenerationProvenance):
+        raise GenerationConflictError("generation adapter provenance is missing")
+    identities = {
+        name: validate_identity(getattr(provenance, name), name)
+        for name in ("model", "model_endpoint", "tool", "worker")
+    }
+    if identities["model_endpoint"] != dict(request.model_endpoint):
+        raise GenerationConflictError("generation adapter used a different model endpoint")
+    digests = {
+        name: getattr(provenance, name)
+        for name in ("prompt_digest", "config_digest", "invocation_digest")
+    }
+    for name, digest in digests.items():
+        require_sha256_digest(digest, name)
+    return {**identities, **digests}
 
 
 def _validate_materialized_files(files: object, *, allow_empty: bool = False) -> None:

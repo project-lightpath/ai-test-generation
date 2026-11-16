@@ -39,12 +39,13 @@ Not owned here (explicit non-goals):
 
 ## 3. Contracts
 
-Existing `atg.generation` v1 (the current repository contract):
+`atg.generation` v1 contract:
 ```
 required: [contract, version, generation_id, run_id, plan_id, plan_revision, plan_artifact_digest, plan_checkpoint_id, plan_decision_id, base, candidate, patch_digest, materialized_test_digest, subject_materializations, model, tool, worker, attempts, artifacts, status, created_at]
 base/candidate: common#/$defs/identity (git-tree)
 changed_files required for generated/verified outcomes; constrained to approved test roots
 each attempt binds patch + materialized artifacts, changed files, checks, model/tool/worker identity, and status
+each attempt also binds non-secret endpoint identity and prompt/config/invocation record digests
 subject_materializations binds the materialized-test digest separately to base and candidate
 status: generated | verified | rejected | inconclusive
 ```
@@ -137,15 +138,18 @@ Methods:
 
 ```
 src/atg/ports/generation.py:
+  @dataclass GenerationRequest(generation_id, plan_id, run_id, expected_revision, idempotency_key, base, candidate, model_endpoint)
   @dataclass PatchCandidate(patch_text, materialized_files, base_files)
+  @dataclass GeneratedCandidate(patch, provenance)
+  @dataclass GenerationProvenance(model, model_endpoint, tool, worker, prompt_digest, config_digest, invocation_digest)
   @dataclass ValidationResult(syntax_ok, format_ok, compile_ok, collected, unsupported)
-  class GenerationPort(Protocol): generate(request, attempt, feedback) -> PatchCandidate | None
+  class GenerationPort(Protocol): generate(request, attempt, feedback) -> GeneratedCandidate | None
   class ValidationPort(Protocol): validate(candidate) -> ValidationResult
   class PatchMaterializationPort(Protocol): materialize(candidate, workspace, digests) -> MaterializationResult
 ```
 
 Adapters:
-- `adapters/generation/deterministic.py` - local static validation plus request-backed bounded generation replay; no subprocess or live model
+- `adapters/generation/deterministic.py` - local static validation and out-of-band configured replay adapter; no output or model identity is accepted from the HTTP body
 - Future: `adapters/generation/maven_validator.py` (executes `mvn -Dtest=...` via approved command from profile, not model output) - out of scope for 5047, stub only
 
 Credentials: no new secrets; model identity is `common#/$defs/identity` (kind=model, id=model-alias, version=model-version). Execution credentials remain separate (TG-6).
@@ -157,7 +161,7 @@ Reuses `run_state_server.py` patterns (Idempotency-Key, BadRequest vs Conflict):
 ```
 POST /generations
   header: Idempotency-Key
-  body: {generation_id, plan_id, run_id, expected_revision, created_at, patch_text, base_files, materialized_files, base, candidate, model, tool, worker, repair_candidates?}
+  body: {generation_id, plan_id, run_id, expected_revision, created_at, base, candidate, model_endpoint}
   201 created, 200 duplicate (same digest), 400 BadRequest (missing/invalid plan, bad digest, path traversal), 409 PlanningConflictError (plan not approved/digest mismatch), 409 GenerationConflictError (generation_id bound to different inputs)
   side-effect: emits generation_started + one terminal event; persists attempts and atg.generation bundle
 
@@ -200,16 +204,19 @@ Replay/evaluation:
 
 ## 11. Remaining Local Path and 5050 Handoff
 
-5047 must finish the stable, provider-neutral seam; it must not select an LLM,
-agent framework, model endpoint, or Tekton responsibility split. Those are the
-decision outputs of FLPATH-5050 and FLPATH-5051. The request-backed generator is
-a deterministic test adapter only, not a production generator.
+5047 finishes the stable provider-neutral seam. HTTP carries generation intent
+and a non-secret BYOM endpoint identity; patch output and model/tool/worker
+identity come from the configured `GenerationPort`, never caller-supplied patch
+fields. The deterministic replay adapter is test-only, not a production
+generator. 5050 evaluates end-to-end stacks and provides evidence for a later
+adapter choice; exercising one does not select it as an ATG dependency.
 
 Before treating 5047 as locally complete:
 
 1. **Complete:** generation and validation adapters are injectable through the
-   local service composition, so 5050 can exercise a fake or endpoint without
-   changing domain/application code.
+   local service composition. HTTP requests carry intent only, while adapters
+   return patch output and invocation provenance; this lets 5050 exercise a
+   stack without changing domain/application code.
 2. **Complete:** the bounded, symlink-safe materialization adapter applies only
    canonical patches into configured workspaces and verifies patch/base/result
    content digests.
@@ -228,7 +235,7 @@ Before treating 5047 as locally complete:
 
 The remaining 5047 implementation after the 5050 decision is to add the selected
 generator adapter and target-profile validation adapter behind these ports.
-5050 can compare harness/model options against the same `GenerationPort`,
+5050 can compare whole-stack harness options against the same `GenerationPort`,
 `ValidationPort`, approved plan, deterministic fixture, and persisted result.
 The evaluation should record candidate name/version/configuration/endpoint,
 commands, observations, limitations, security/licensing/ownership findings,

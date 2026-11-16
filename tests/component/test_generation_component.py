@@ -10,8 +10,7 @@ from urllib.request import Request, urlopen
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.component.run_state_server import create_server
-from atg.adapters.generation.deterministic import RequestGenerationAdapter
-from atg.ports.generation import ValidationResult
+from atg.ports.generation import GeneratedCandidate, GenerationProvenance, PatchCandidate, ValidationResult
 from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.domain.generation import canonical_patch
 from atg.domain.repository_analysis import RepositorySubject
@@ -91,7 +90,10 @@ class GenerationHTTPTests(unittest.TestCase):
         run = self.prepare_coding()
         content = "def test_target_handler():\n    # target-handler\n    actual = target_handler()\n    assert actual == 42\n"
         files = {"tests/test_generated.py": content}
-        body = {"generation_id": "gen-http-1", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        self.generator.configure("gen-http-1", GeneratedCandidate(
+            PatchCandidate(canonical_patch({}, files), files), provenance()
+        ))
+        body = generation_body("gen-http-1", run)
         status, doc = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-key"})
         self.assertEqual(status, 201)
         self.assertEqual(doc["manifest"]["generation_id"], "gen-http-1")
@@ -110,31 +112,36 @@ class GenerationHTTPTests(unittest.TestCase):
         run = self.prepare_coding()
         content = "def test_target_handler():\n    # target-handler\n    assert True\n"
         files = {"src/main/app.py": content}
-        body = {"generation_id": "gen-http-2", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        self.generator.configure("gen-http-2", GeneratedCandidate(
+            PatchCandidate(canonical_patch({}, files), files), provenance()
+        ))
+        body = generation_body("gen-http-2", run)
         status, document = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-bad-path"})
         self.assertEqual(status, 201)
         self.assertEqual(document["manifest"]["status"], "rejected")
 
     def test_generation_requires_approved_plan(self):
         self.request("POST", "/runs", {"run_id": "run-http-gen", "created_at": "2099-11-09T20:00:00Z"})
-        content = "def test_target_handler():\n    assert value == 1\n"
-        files = {"tests/test_generated.py": content}
-        body = {"generation_id": "gen-http-3", "plan_id": "plan-missing", "run_id": "run-http-gen", "expected_revision": 0, "created_at": "2099-11-09T20:04:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        body = generation_body("gen-http-3", {"revision": 0}, plan_id="plan-missing")
         status, _ = self.request("POST", "/generations", body, {"Idempotency-Key": "generation-http-missing-plan"})
         self.assertEqual(status, 409)
 
     def test_generation_requires_idempotency_key(self):
         run = self.prepare_coding()
-        content = "def test_target_handler():\n    # target-handler\n    assert value == 1\n"
-        files = {"tests/test_generated.py": content}
-        body = {"generation_id": "gen-http-4", "plan_id": "plan-http-gen", "run_id": "run-http-gen", "expected_revision": run["revision"], "created_at": "2099-11-09T20:05:00Z", "patch_text": canonical_patch({}, files), "materialized_files": files, "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"}, "model": {"kind": "model", "id": "model-1", "version": "1"}, "tool": {"kind": "generation-tool", "id": "tool-1", "version": "1"}, "worker": {"kind": "worker", "id": "worker-1", "version": "1"}}
+        body = generation_body("gen-http-4", run)
         status, document = self.request("POST", "/generations", body)
         self.assertEqual(status, 400)
         self.assertIn("Idempotency-Key", document["error"])
 
-if __name__ == "__main__":
-    unittest.main()
-
+    def test_generation_rejects_caller_supplied_output(self):
+        run = self.prepare_coding()
+        body = generation_body("gen-http-output", run)
+        body["patch_text"] = "untrusted output"
+        status, document = self.request(
+            "POST", "/generations", body, {"Idempotency-Key": "generation-http-output"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("patch_text", document["error"])
 
 class RecordingValidationAdapter:
     def __init__(self):
@@ -145,10 +152,43 @@ class RecordingValidationAdapter:
         return ValidationResult(True, True, True, 1)
 
 
-class RecordingGenerationAdapter(RequestGenerationAdapter):
+class RecordingGenerationAdapter:
     def __init__(self):
         self.calls = 0
+        self.outputs = {}
+
+    def configure(self, generation_id, generated):
+        self.outputs[generation_id] = generated
 
     def generate(self, request, attempt, feedback):
         self.calls += 1
-        return super().generate(request, attempt, feedback)
+        return self.outputs.get(request.generation_id) if attempt == 1 else None
+
+
+def generation_body(generation_id, run, plan_id="plan-http-gen"):
+    return {
+        "generation_id": generation_id,
+        "plan_id": plan_id,
+        "run_id": "run-http-gen",
+        "expected_revision": run["revision"],
+        "created_at": "2099-11-09T20:05:00Z",
+        "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"},
+        "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "def456"},
+        "model_endpoint": {"kind": "model-endpoint", "id": "http-endpoint", "version": "1"},
+    }
+
+
+def provenance():
+    return GenerationProvenance(
+        model={"kind": "model", "id": "model-1", "version": "1"},
+        model_endpoint={"kind": "model-endpoint", "id": "http-endpoint", "version": "1"},
+        tool={"kind": "generation-tool", "id": "tool-1", "version": "1"},
+        worker={"kind": "worker", "id": "worker-1", "version": "1"},
+        prompt_digest="sha256:" + "1" * 64,
+        config_digest="sha256:" + "2" * 64,
+        invocation_digest="sha256:" + "3" * 64,
+    )
+
+
+if __name__ == "__main__":
+    unittest.main()

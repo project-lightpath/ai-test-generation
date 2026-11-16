@@ -4,7 +4,7 @@
   "title": "ATG generated test change",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract", "version", "generation_id", "run_id", "plan_id", "plan_revision", "plan_artifact_digest", "plan_checkpoint_id", "plan_decision_id", "base", "candidate", "patch_digest", "materialized_test_digest", "subject_materializations", "status", "created_at", "model", "tool", "worker", "attempts", "artifacts"],
+  "required": ["contract", "version", "generation_id", "run_id", "plan_id", "plan_revision", "plan_artifact_digest", "plan_checkpoint_id", "plan_decision_id", "base", "candidate", "patch_digest", "materialized_test_digest", "subject_materializations", "status", "created_at", "model", "model_endpoint", "tool", "worker", "prompt_digest", "config_digest", "invocation_digest", "attempts", "artifacts"],
   "properties": {
     "contract": { "const": "atg.generation" },
     "version": { "$ref": "common.schema.json#/$defs/contract_version" },
@@ -28,8 +28,12 @@
     "status": { "enum": ["generated", "verified", "rejected", "inconclusive"] },
     "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
     "model": { "$ref": "common.schema.json#/$defs/identity" },
+    "model_endpoint": { "$ref": "common.schema.json#/$defs/identity" },
     "tool": { "$ref": "common.schema.json#/$defs/identity" },
     "worker": { "$ref": "common.schema.json#/$defs/identity" },
+    "prompt_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+    "config_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+    "invocation_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
     "materialized_test_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
     "subject_materializations": {
       "type": "array",
@@ -52,7 +56,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["attempt", "input_digest", "output_digest", "patch_artifact_id", "materialized_artifact_id", "changed_files", "model", "tool", "worker", "status", "checks"],
+        "required": ["attempt", "input_digest", "output_digest", "patch_artifact_id", "materialized_artifact_id", "changed_files", "model", "model_endpoint", "tool", "worker", "prompt_digest", "config_digest", "invocation_digest", "status", "checks"],
         "properties": {
           "attempt": { "type": "integer", "minimum": 1, "maximum": 3 },
           "input_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
@@ -61,8 +65,12 @@
           "materialized_artifact_id": { "$ref": "common.schema.json#/$defs/id" },
           "changed_files": { "type": "array", "maxItems": 10, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
           "model": { "$ref": "common.schema.json#/$defs/identity" },
+          "model_endpoint": { "$ref": "common.schema.json#/$defs/identity" },
           "tool": { "$ref": "common.schema.json#/$defs/identity" },
           "worker": { "$ref": "common.schema.json#/$defs/identity" },
+          "prompt_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+          "config_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
+          "invocation_digest": { "$ref": "common.schema.json#/$defs/payload_digest" },
           "status": { "enum": ["verified", "rejected", "inconclusive"] },
           "checks": {
             "type": "array",

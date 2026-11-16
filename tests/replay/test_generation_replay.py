@@ -6,11 +6,11 @@ from tempfile import TemporaryDirectory
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "src"))
 
 from atg.adapters.persistence.sqlite_run_state import SQLiteRunStateStore
-from atg.application.generation import GenerationService
 from tests.unit.test_analysis import create_repository
 from tests.unit.test_generation import (
-    FixtureValidationAdapter,
     candidate,
+    generated,
+    generation_service,
     prepare_coding_store,
     request,
 )
@@ -25,9 +25,9 @@ class GenerationReplayTests(unittest.TestCase):
             database = pathlib.Path(directory) / "atg.sqlite3"
             store, _ = prepare_coding_store(root, database)
             bad = candidate("def test_target_handler():\n    # target-handler\n    value = 1\n")
-            created = GenerationService(store, validator=FixtureValidationAdapter()).generate(request(
-                store.get_run("run-1"), first=bad, repairs=(candidate(),)
-            ))
+            created = generation_service(
+                store, (generated(bad), generated(candidate()))
+            ).generate(request(store.get_run("run-1")))
             store.close()
 
             reopened = SQLiteRunStateStore(database)

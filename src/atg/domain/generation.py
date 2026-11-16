@@ -187,6 +187,14 @@ def validate_generation_manifest(
         if isinstance(item, Mapping)
     ):
         raise ValueError("generation subject materialization digests do not match base and candidate")
+    attempts = manifest.get("attempts", [])
+    if attempts:
+        provenance_fields = (
+            "model", "model_endpoint", "tool", "worker", "prompt_digest",
+            "config_digest", "invocation_digest",
+        )
+        if any(manifest.get(field) != attempts[-1].get(field) for field in provenance_fields):
+            raise ValueError("generation-level invocation provenance differs from final attempt")
 
 
 def validate_artifact_bundle(

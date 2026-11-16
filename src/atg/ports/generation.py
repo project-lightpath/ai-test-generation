@@ -16,6 +16,27 @@ class PatchCandidate:
 
 
 @dataclass(frozen=True)
+class GenerationProvenance:
+    """Non-secret identities and digests for one adapter invocation."""
+
+    model: Mapping[str, object]
+    model_endpoint: Mapping[str, object]
+    tool: Mapping[str, object]
+    worker: Mapping[str, object]
+    prompt_digest: str
+    config_digest: str
+    invocation_digest: str
+
+
+@dataclass(frozen=True)
+class GeneratedCandidate:
+    """Patch output and the adapter-attested invocation provenance."""
+
+    patch: PatchCandidate
+    provenance: GenerationProvenance
+
+
+@dataclass(frozen=True)
 class ValidationResult:
     """Deterministic precheck results for one generated candidate."""
 
@@ -29,9 +50,11 @@ class ValidationResult:
 
 
 class GenerationPort(Protocol):
-    """Produce an initial candidate or bounded repair from untrusted output."""
+    """Produce an initial candidate or bounded repair from generation intent."""
 
-    def generate(self, request: object, attempt: int, feedback: tuple[str, ...]) -> PatchCandidate | None:
+    def generate(
+        self, request: object, attempt: int, feedback: tuple[str, ...]
+    ) -> GeneratedCandidate | None:
         """Return the candidate for an attempt, or None when no repair exists."""
 
 

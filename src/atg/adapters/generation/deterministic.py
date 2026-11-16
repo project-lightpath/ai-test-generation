@@ -10,6 +10,7 @@ import ast
 import errno
 import os
 import stat
+import threading
 import uuid
 from pathlib import Path
 
@@ -19,16 +20,28 @@ from atg.domain.generation import (
     compute_patch_digest,
     validate_candidate_paths,
 )
-from atg.ports.generation import PatchCandidate, ValidationResult
+from atg.ports.generation import GeneratedCandidate, PatchCandidate, ValidationResult
 
 
-class RequestGenerationAdapter:
-    """Read bounded candidates from the development request fixture."""
+class ReplayGenerationAdapter:
+    """Return configured recorded outputs without accepting them over HTTP."""
 
-    def generate(self, request, attempt: int, feedback: tuple[str, ...]) -> PatchCandidate | None:
-        """Return exactly one request candidate per bounded attempt."""
-        candidates = request.candidates
-        return candidates[attempt - 1] if attempt <= len(candidates) else None
+    def __init__(self, outputs=None):
+        self._lock = threading.RLock()
+        self._outputs = dict(outputs or {})
+
+    def configure(self, generation_id: str, outputs: tuple[GeneratedCandidate, ...]) -> None:
+        """Install deterministic test outputs for one generation identity."""
+        with self._lock:
+            self._outputs[generation_id] = tuple(outputs)
+
+    def generate(
+        self, request, attempt: int, feedback: tuple[str, ...]
+    ) -> GeneratedCandidate | None:
+        """Return a pre-recorded candidate for the requested attempt."""
+        with self._lock:
+            outputs = self._outputs.get(request.generation_id, ())
+        return outputs[attempt - 1] if 1 <= attempt <= len(outputs) else None
 
 
 class DeterministicValidationAdapter:

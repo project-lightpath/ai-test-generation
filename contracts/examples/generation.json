@@ -22,6 +22,10 @@
   "model": {"kind": "model", "id": "approved-model", "version": "1"},
   "tool": {"kind": "generation-tool", "id": "bounded-generator", "version": "1"},
   "worker": {"kind": "worker", "id": "worker-001", "version": "1"},
+  "model_endpoint": {"kind": "model-endpoint", "id": "endpoint-label-1", "version": "1"},
+  "prompt_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "config_digest": "sha256:abababababababababababababababababababababababababababababababab",
+  "invocation_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
   "attempts": [{
     "attempt": 1,
     "input_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
@@ -30,8 +34,12 @@
     "materialized_artifact_id": "artifact-generation-001-tests-1",
     "changed_files": ["src/test/java/AppTest.java"],
     "model": {"kind": "model", "id": "approved-model", "version": "1"},
+    "model_endpoint": {"kind": "model-endpoint", "id": "endpoint-label-1", "version": "1"},
     "tool": {"kind": "generation-tool", "id": "bounded-generator", "version": "1"},
     "worker": {"kind": "worker", "id": "worker-001", "version": "1"},
+    "prompt_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "config_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "invocation_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
     "status": "verified",
     "checks": [
       {"name": "approved_path", "status": "pass"},
