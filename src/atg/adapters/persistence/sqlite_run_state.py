@@ -304,13 +304,13 @@ class SQLiteRunStateStore:
 
     def get_generation(self, generation_id: str) -> dict | None:
         with self._lock:
-            row = self._connection.execute("SELECT bundle_json FROM generations WHERE generation_id = ?", (generation_id,)).fetchone()
+            row = self._connection.execute("SELECT bundle_json, request_digest FROM generations WHERE generation_id = ?", (generation_id,)).fetchone()
         if row is None:
             return None
         doc = json.loads(row["bundle_json"])
-        if row is not None:
-            if doc.get("generation_id") != generation_id:
-                raise ContractValidationError("persisted generation id mismatch")
+        if doc.get("generation_id") != generation_id:
+            raise ContractValidationError("persisted generation id mismatch")
+        doc["request_digest"] = row["request_digest"]
         return doc
 
     def record_generation(self, generation_id: str, run_id: str, plan_id: str, request_digest: str, bundle: dict, started_event: RunEvent, completed_event: RunEvent) -> dict:
@@ -327,11 +327,15 @@ class SQLiteRunStateStore:
                         from atg.application.generation import GenerationConflictError
                         raise GenerationConflictError("generation identity is bound to different inputs")
                     self._connection.execute("COMMIT")
-                    return json.loads(existing["bundle_json"])
+                    doc = json.loads(existing["bundle_json"])
+                    doc["request_digest"] = existing["request_digest"]
+                    return doc
                 self._apply_locked(started_event)
                 self._apply_locked(completed_event)
                 self._connection.execute("INSERT INTO generations(generation_id, run_id, plan_id, request_digest, bundle_json) VALUES (?, ?, ?, ?, ?)", (generation_id, run_id, plan_id, request_digest, json.dumps(bundle, sort_keys=True)))
                 self._connection.execute("COMMIT")
+                bundle = dict(bundle)
+                bundle["request_digest"] = request_digest
                 return bundle
             except Exception:
                 self._connection.execute("ROLLBACK")

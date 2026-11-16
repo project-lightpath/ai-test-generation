@@ -106,7 +106,6 @@ class GenerationService:
                 "changed_files": request.changed_files,
                 "status": "verified" if status == "verified" else "generated",
                 "created_at": request.created_at,
-                "request_digest": request.digest(),
             }
             if request.model:
                 bundle["model"] = dict(request.model)
