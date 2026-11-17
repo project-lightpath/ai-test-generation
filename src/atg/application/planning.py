@@ -205,6 +205,24 @@ def _build_plan(request: PlanningRequest, analysis) -> PlanRecord:
         if artifact["artifact"].get("artifact_id") == f"artifact-{analysis.manifest['analysis_id']}"
     )
     objective_refs = [str(objective["objective_id"]) for objective in analysis.objectives]
+    test_inventory = next(
+        (
+            artifact.get("content", [])
+            for artifact in analysis.artifacts
+            if artifact.get("artifact", {}).get("media_type")
+            == "application/vnd.atg.test-inventory+json"
+        ),
+        [],
+    )
+    allowed_paths = sorted({
+        root
+        for entry in test_inventory
+        if isinstance(entry, Mapping) and isinstance(entry.get("path"), str)
+        for root in ("src/test/", "tests/")
+        if entry["path"].startswith(root)
+    })
+    if not allowed_paths:
+        raise PlanningConflictError("plan requires a discovered repository test root")
     candidates = {candidate.get("objective_ref"): candidate for candidate in analysis.manifest.get("objective_candidates", [])}
     coverage = []
     feasibility = []
@@ -238,6 +256,7 @@ def _build_plan(request: PlanningRequest, analysis) -> PlanRecord:
         "analysis_revision": analysis.manifest["revision"], "subject": analysis.manifest["subject"], "plan_revision": 1,
         "objective_refs": objective_refs, "steps": steps, "status": "draft", "created_at": request.occurred_at,
         "provenance_ref": f"provenance-{request.plan_id}", "artifact_refs": [f"artifact-{request.plan_id}"],
+        "allowed_paths": allowed_paths,
         "assumptions": list(analysis.manifest.get("assumptions", [])), "gaps": list(analysis.manifest.get("gaps", [])),
         "coverage_matrix": coverage, "feasibility": feasibility,
     }

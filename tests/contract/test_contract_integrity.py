@@ -36,6 +36,7 @@ def graph_documents():
         "analysis_revision": 1, "subject": {"kind": "git-repository", "id": "repo-1", "version": "abc123"}, "plan_revision": 1,
         "objective_refs": ["objective-1"], "steps": [{"step_id": "step-1", "stage": "execute", "action": "run tests"}],
         "status": "approved", "created_at": "2026-11-03T17:00:00Z", "provenance_ref": "provenance-1", "artifact_refs": ["artifact-plan-1"],
+         "allowed_paths": ["src/test/"],
          "coverage_matrix": [{"objective_ref": "objective-1", "disposition": "planned"}],
          "feasibility": [{"objective_ref": "objective-1", "strategy": "static", "status": "available"}],
     }

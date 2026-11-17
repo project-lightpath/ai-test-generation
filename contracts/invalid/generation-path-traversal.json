@@ -1,0 +1,52 @@
+{
+  "contract": "atg.generation",
+  "version": "1.0",
+  "generation_id": "generation-invalid-path",
+  "run_id": "run-001",
+  "plan_id": "plan-001",
+  "plan_revision": 1,
+  "plan_artifact_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "plan_checkpoint_id": "checkpoint-plan-001",
+  "plan_decision_id": "decision-plan-001",
+  "base": {"kind": "git-tree", "id": "base-tree", "version": "abc123"},
+  "candidate": {"kind": "git-tree", "id": "candidate-tree", "version": "candidate-001"},
+  "patch_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "materialized_test_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "subject_materializations": [
+    {"subject": {"kind": "git-tree", "id": "base-tree", "version": "abc123"}, "test_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"subject": {"kind": "git-tree", "id": "candidate-tree", "version": "candidate-001"}, "test_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+  ],
+  "changed_files": ["tests/../src/main/App.java"],
+  "status": "verified",
+  "created_at": "2026-11-03T17:03:00Z",
+  "model": {"kind": "model", "id": "approved-model", "version": "1"},
+  "tool": {"kind": "generation-tool", "id": "bounded-generator", "version": "1"},
+  "worker": {"kind": "worker", "id": "worker-001", "version": "1"},
+  "model_endpoint": {"kind": "model-endpoint", "id": "endpoint-label-1", "version": "1"},
+  "prompt_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "config_digest": "sha256:abababababababababababababababababababababababababababababababab",
+  "invocation_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "attempts": [{
+    "attempt": 1,
+    "input_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "output_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "patch_artifact_id": "artifact-generation-invalid-patch",
+    "materialized_artifact_id": "artifact-generation-invalid-tests",
+    "base_artifact_id": "artifact-generation-invalid-base",
+    "changed_files": ["tests/../src/main/App.java"],
+    "model": {"kind": "model", "id": "approved-model", "version": "1"},
+    "model_endpoint": {"kind": "model-endpoint", "id": "endpoint-label-1", "version": "1"},
+    "tool": {"kind": "generation-tool", "id": "bounded-generator", "version": "1"},
+    "worker": {"kind": "worker", "id": "worker-001", "version": "1"},
+    "prompt_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "config_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "invocation_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+    "status": "verified",
+    "checks": [{"name": "approved_path", "status": "pass"}]
+  }],
+  "artifacts": [
+    {"artifact_id": "artifact-generation-invalid-patch", "media_type": "text/x-diff", "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+    {"artifact_id": "artifact-generation-invalid-tests", "media_type": "application/vnd.atg.materialized-tests+json", "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
+    {"artifact_id": "artifact-generation-invalid-base", "media_type": "application/vnd.atg.base-files+json", "digest": "sha256:abababababababababababababababababababababababababababababababab"}
+  ]
+}

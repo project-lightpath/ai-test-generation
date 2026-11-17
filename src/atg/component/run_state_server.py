@@ -21,6 +21,13 @@ from atg.application.admission import AdmissionConflictError, AdmissionRequest, 
 from atg.application.analysis import AnalysisConflictError, AnalysisProcessingError, AnalysisRequest, AnalysisService
 from atg.application.planning import PlanningConflictError, PlanningRequest, PlanningService
 from atg.application.feedback import FeedbackConflictError, FeedbackRequest
+from atg.application.generation import (
+    GenerationAdapterUnavailableError,
+    GenerationCandidateInvalidError,
+    GenerationConflictError,
+    GenerationRequest,
+    GenerationService,
+)
 from atg.application.readiness import PlatformReadinessService
 from atg.domain.repository_analysis import RepositorySubject
 from atg.domain.schema_validation import ContractValidationError, contract_asset_path
@@ -44,6 +51,7 @@ ANALYSIS_FIELDS = frozenset({
 })
 PLAN_FIELDS = frozenset({"plan_id", "analysis_id", "run_id", "expected_revision", "occurred_at"})
 FEEDBACK_FIELDS = frozenset({"feedback_id", "run_id", "plan_revision", "plan_artifact_digest", "checkpoint_id", "created_at", "message", "category", "severity", "actor_id"})
+GENERATION_FIELDS = frozenset({"generation_id", "plan_id", "run_id", "expected_revision", "created_at", "base", "candidate", "model_endpoint"})
 DECISION_FIELDS = frozenset({"run_id", "expected_revision", "occurred_at", "decision", "decision_id", "actor_id", "actor_role", "authorization_ref", "reason"})
 IDENTITY_FIELDS = frozenset({"kind", "id", "version", "digest"})
 SOURCE_FIELDS = frozenset({"identity", "locator", "retrieved_at", "content_digest"})
@@ -68,8 +76,10 @@ def create_server(
     capabilities=(),
     repository_roots=None,
     analyzers=(),
+    generation_adapter=None,
+    generation_validator=None,
 ):
-    """Create the local HTTP development component."""
+    """Create the local component with injectable Code-stage adapters."""
     store = SQLiteRunStateStore(database)
 
     class CapabilityCheck:
@@ -127,6 +137,9 @@ def create_server(
     repository_roots = dict(repository_roots or {})
     analysis_service = AnalysisService(store, LocalRepositoryContextAdapter(), tuple(analyzers))
     planning_service = PlanningService(store)
+    generation_service = GenerationService(
+        store, generator=generation_adapter, validator=generation_validator
+    )
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):  # noqa: A002
@@ -160,6 +173,9 @@ def create_server(
                 elif len(parts) == 2 and parts[0] == "feedback":
                     feedback = store.get_feedback(parts[1])
                     self._respond(200, feedback) if feedback is not None else self._respond(404, {"error": "feedback not found"})
+                elif len(parts) == 2 and parts[0] == "generations":
+                    generation = store.get_generation(parts[1])
+                    self._respond(200, _generation_document(generation)) if generation is not None else self._respond(404, {"error": "generation not found"})
                 elif len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     self._respond(200, {"events": [_event_document(event) for event in store.events(parts[1])]})
                 elif parts == ["readiness"]:
@@ -462,6 +478,48 @@ def create_server(
                     result = store.apply(event)
                     self._respond(200, {"duplicate": result.duplicate, "state": result.state.to_document()})
                     return
+                if parts == ["generations"]:
+                    if not isinstance(body, dict):
+                        raise BadRequestError("generation body must be a JSON object")
+                    unknown = sorted(set(body) - GENERATION_FIELDS)
+                    if unknown:
+                        raise BadRequestError(f"unsupported generation fields: {', '.join(unknown)}")
+                    required = (
+                        "generation_id", "plan_id", "run_id", "expected_revision", "created_at",
+                        "base", "candidate", "model_endpoint",
+                    )
+                    missing = [field for field in required if field not in body]
+                    if missing:
+                        raise BadRequestError(
+                            f"generation requires fields: {', '.join(missing)}"
+                        )
+                    for field in ("generation_id", "plan_id", "run_id"):
+                        try:
+                            validate_identifier(body[field], field)
+                        except (TypeError, ValueError) as exc:
+                            raise BadRequestError(str(exc)) from exc
+                    try:
+                        validate_timestamp(body["created_at"], "created_at")
+                    except ValueError as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    if not isinstance(body.get("expected_revision"), int) or isinstance(body.get("expected_revision"), bool) or body["expected_revision"] < 0:
+                        raise BadRequestError("expected_revision must be a non-negative integer")
+                    idempotency_key = self.headers.get("Idempotency-Key")
+                    if not idempotency_key:
+                        raise BadRequestError("generation requires Idempotency-Key header")
+                    try:
+                        validate_identifier(idempotency_key, "Idempotency-Key")
+                        request = GenerationRequest(
+                            generation_id=body["generation_id"], plan_id=body["plan_id"], run_id=body["run_id"],
+                            expected_revision=body["expected_revision"], created_at=body["created_at"],
+                            idempotency_key=idempotency_key, base=body["base"],
+                            candidate=body["candidate"], model_endpoint=body["model_endpoint"],
+                        )
+                    except (KeyError, TypeError, ValueError) as exc:
+                        raise BadRequestError(str(exc)) from exc
+                    result = generation_service.generate(request)
+                    self._respond(200 if result.duplicate else 201, _generation_document(result))
+                    return
                 if len(parts) == 3 and parts[0] == "runs" and parts[2] == "events":
                     if not isinstance(body, dict):
                         raise BadRequestError("request body must be a JSON object")
@@ -503,6 +561,12 @@ def create_server(
                 self._respond(409, {"error": str(exc)})
             except FeedbackConflictError as exc:
                 self._respond(409, {"error": str(exc)})
+            except GenerationConflictError as exc:
+                self._respond(409, {"error": str(exc)})
+            except GenerationCandidateInvalidError as exc:
+                self._respond(422, {"error": str(exc)})
+            except GenerationAdapterUnavailableError as exc:
+                self._respond(503, {"error": str(exc)})
             except AnalysisProcessingError:
                 self._respond(422, {"error": "analysis processing failed"})
             except ContractValidationError:
@@ -576,6 +640,16 @@ def _plan_document(record) -> dict:
         "manifest": dict(record.manifest),
         "checkpoint": dict(record.checkpoint),
         "provenance": dict(record.provenance),
+        "artifacts": [dict(document["artifact"]) for document in record.artifacts],
+    }
+
+
+def _generation_document(record) -> dict:
+    """Serialize generation metadata without exposing generated source content."""
+    return {
+        "duplicate": record.duplicate,
+        "manifest": dict(record.manifest),
+        "attempts": [dict(attempt) for attempt in record.attempts],
         "artifacts": [dict(document["artifact"]) for document in record.artifacts],
     }
 

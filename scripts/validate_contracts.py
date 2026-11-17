@@ -78,6 +78,7 @@ def validate_contracts(
         ("signed-differential", "signed-differential-no-supporting-comparison.json"),
         ("preflight", "preflight-ready-required-check-failed.json"),
         ("preflight", "preflight-not-evaluable-rejected-required-check-failed.json"),
+        ("generation", "generation-path-traversal.json"),
     ]
     for name, filename in invalid_fixtures:
         invalid_document = json.loads((invalid_root / filename).read_text())

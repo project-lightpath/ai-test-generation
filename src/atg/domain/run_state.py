@@ -42,7 +42,7 @@ class SupersessionError(RunStateError):
 
 EVENT_TYPES = frozenset({
     "admit", "admission_blocked", "analysis_started", "analysis_completed", "analysis_blocked", "analysis_inconclusive", "checkpoint_created", "checkpoint_expired",
-    "decision_recorded", "planning_completed", "plan_submitted", "generation_started", "generation_completed",
+    "decision_recorded", "planning_completed", "plan_submitted", "generation_started", "generation_completed", "generation_rejected", "generation_inconclusive",
     "execution_started", "execution_completed", "quality_passed", "quality_blocked",
     "quality_inconclusive", "quality_gap", "retry_requested", "return_to_analyze",
     "return_to_plan", "return_to_code", "return_to_execute", "cancel",
@@ -82,6 +82,7 @@ class RunEvent:
     plan_artifact_digest: str | None = None
     feedback_id: str | None = None
     generation_id: str | None = None
+    generation_request_digest: str | None = None
     artifact_id: str | None = None
     artifact_digest: str | None = None
 
@@ -124,6 +125,11 @@ class RunEvent:
                 require_sha256_digest(self.artifact_digest, "artifact_digest")
             except ValueError as exc:
                 raise InvalidEventError(str(exc)) from exc
+        if self.generation_request_digest is not None:
+            try:
+                require_sha256_digest(self.generation_request_digest, "generation_request_digest")
+            except ValueError as exc:
+                raise InvalidEventError(str(exc)) from exc
         for field_name in ("actor_role", "reason"):
             value = getattr(self, field_name)
             if value is not None and not isinstance(value, str):
@@ -141,12 +147,14 @@ class RunEvent:
                 raise InvalidEventError("decisions require checkpoint, decision, reviewer, and authorization fields")
         if self.event_type == "plan_submitted" and not all((self.plan_id, self.plan_revision, self.plan_artifact_id, self.plan_artifact_digest)):
             raise InvalidEventError("plan submission requires plan identity, revision, and artifact metadata")
-        if self.event_type in {"admission_blocked", "analysis_blocked", "analysis_inconclusive", "cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
+        if self.event_type in {"admission_blocked", "analysis_blocked", "analysis_inconclusive", "generation_rejected", "generation_inconclusive", "cancel", "retry_requested", "return_to_analyze", "return_to_plan", "return_to_code", "return_to_execute"} and not self.reason:
             raise InvalidEventError(f"{self.event_type} requires a reason")
         if self.event_type == "return_to_plan" and not self.feedback_id:
             raise InvalidEventError("return_to_plan requires feedback_id")
         if self.event_type == "generation_started" and not self.generation_id:
             raise InvalidEventError("generation_started requires generation_id")
+        if self.event_type in {"generation_rejected", "generation_inconclusive"} and not self.generation_id:
+            raise InvalidEventError(f"{self.event_type} requires generation_id")
         if self.event_type == "generation_completed" and not all(
             (self.generation_id, self.artifact_id, self.artifact_digest)
         ):
@@ -223,6 +231,8 @@ class RunState:
         "plan_submitted": {"planning": "planning"},
         "generation_started": {"coding": "coding"},
         "generation_completed": {"coding": "coding"},
+        "generation_rejected": {"coding": "coding"},
+        "generation_inconclusive": {"coding": "coding"},
         "execution_started": {"executing": "executing"},
         "execution_completed": {"executing": "executing"},
         "quality_passed": {"quality_review": "completed"},
@@ -294,6 +304,9 @@ class RunState:
             if event.event_type == "generation_completed":
                 if not self.generation_in_progress or event.generation_id != self.active_generation_id:
                     raise InvalidTransitionError("generation_completed must follow its generation_started event")
+            if event.event_type in {"generation_rejected", "generation_inconclusive"}:
+                if not self.generation_in_progress or event.generation_id != self.active_generation_id:
+                    raise InvalidTransitionError(f"{event.event_type} must follow its generation_started event")
             if event.event_type == "generation_started":
                 if self.active_plan_id is None:
                     raise InvalidTransitionError("generation_started requires an active approved plan")
@@ -316,7 +329,7 @@ class RunState:
                 ),
                 generation_in_progress=(
                     True if event.event_type == "generation_started"
-                    else False if event.event_type == "generation_completed"
+                    else False if event.event_type in {"generation_completed", "generation_rejected", "generation_inconclusive"}
                     else False if event.event_type == "plan_submitted" or event.event_type == "return_to_plan"
                     else self.generation_in_progress
                 ),
@@ -328,6 +341,13 @@ class RunState:
                         "completed_generation_artifact_digest": event.artifact_digest,
                     }
                     if event.event_type == "generation_completed" else
+                    {
+                        "active_generation_id": None,
+                        "completed_generation_id": None,
+                        "completed_generation_artifact_id": None,
+                        "completed_generation_artifact_digest": None,
+                    }
+                    if event.event_type in {"generation_rejected", "generation_inconclusive"} else
                     {
                         "active_generation_id": event.generation_id,
                         "completed_generation_id": None,
@@ -648,7 +668,7 @@ def event_fingerprint(event: RunEvent) -> str:
     """Return the SHA-256 fingerprint of an event payload."""
     optional_payload_fields = {
         "plan_id", "plan_revision", "plan_artifact_id", "plan_artifact_digest",
-        "feedback_id", "generation_id", "artifact_id", "artifact_digest",
+        "feedback_id", "generation_id", "generation_request_digest", "artifact_id", "artifact_digest",
     }
     values = {
         key: value for key, value in event.__dict__.items()

@@ -56,3 +56,27 @@ def validate_contract_document(document: Mapping[str, object], expected: str) ->
         Draft202012Validator(schema, registry=registry, format_checker=FormatChecker()).validate(document)
     except ValidationError as exc:
         raise ContractValidationError(f"invalid {expected} contract document") from exc
+
+
+def validate_contract_fragment(
+    document: Mapping[str, object], expected: str, schema_path: tuple[str, ...]
+) -> None:
+    """Validate a nested document against a fragment of a canonical schema."""
+    schemas = _schemas()
+    schema: object = schemas[expected]
+    for component in schema_path:
+        if not isinstance(schema, Mapping) or component not in schema:
+            raise ValueError("unknown canonical contract schema fragment")
+        schema = schema[component]
+    if not isinstance(schema, Mapping):
+        raise ValueError("canonical contract schema fragment must be an object")
+    schema = {**schema, "$id": schemas[expected]["$id"]}
+    common = schemas["common"]
+    registry = Registry().with_resource(common["$id"], Resource.from_contents(common))
+    try:
+        Draft202012Validator(
+            schema, registry=registry, format_checker=FormatChecker()
+        ).validate(document)
+    except ValidationError as exc:
+        location = "/".join(schema_path)
+        raise ContractValidationError(f"invalid {expected} contract fragment at {location}") from exc
