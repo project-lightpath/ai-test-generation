@@ -23,6 +23,7 @@ from atg.application.planning import PlanningConflictError, PlanningRequest, Pla
 from atg.application.feedback import FeedbackConflictError, FeedbackRequest
 from atg.application.generation import (
     GenerationAdapterUnavailableError,
+    GenerationCandidateInvalidError,
     GenerationConflictError,
     GenerationRequest,
     GenerationService,
@@ -483,6 +484,15 @@ def create_server(
                     unknown = sorted(set(body) - GENERATION_FIELDS)
                     if unknown:
                         raise BadRequestError(f"unsupported generation fields: {', '.join(unknown)}")
+                    required = (
+                        "generation_id", "plan_id", "run_id", "expected_revision", "created_at",
+                        "base", "candidate", "model_endpoint",
+                    )
+                    missing = [field for field in required if field not in body]
+                    if missing:
+                        raise BadRequestError(
+                            f"generation requires fields: {', '.join(missing)}"
+                        )
                     for field in ("generation_id", "plan_id", "run_id"):
                         try:
                             validate_identifier(body[field], field)
@@ -553,6 +563,8 @@ def create_server(
                 self._respond(409, {"error": str(exc)})
             except GenerationConflictError as exc:
                 self._respond(409, {"error": str(exc)})
+            except GenerationCandidateInvalidError as exc:
+                self._respond(422, {"error": str(exc)})
             except GenerationAdapterUnavailableError as exc:
                 self._respond(503, {"error": str(exc)})
             except AnalysisProcessingError:

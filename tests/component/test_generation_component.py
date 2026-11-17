@@ -141,6 +141,37 @@ class GenerationHTTPTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("Idempotency-Key", document["error"])
 
+    def test_generation_missing_required_fields_returns_bad_request(self):
+        run = self.prepare_coding()
+        fields = (
+            "generation_id", "plan_id", "run_id", "expected_revision", "created_at",
+            "base", "candidate", "model_endpoint",
+        )
+        for index, field in enumerate(fields):
+            with self.subTest(field=field):
+                body = generation_body(f"gen-http-missing-{index}", run)
+                body.pop(field)
+                status, document = self.request(
+                    "POST", "/generations", body,
+                    {"Idempotency-Key": f"generation-http-missing-{index}"},
+                )
+                self.assertEqual(status, 400)
+                self.assertIn(field, document["error"])
+
+    def test_oversized_generation_output_returns_unprocessable_response(self):
+        run = self.prepare_coding()
+        content = "x" * 1_000_001
+        files = {"tests/test_generated.py": content}
+        self.generator.configure("gen-http-large", GeneratedCandidate(
+            PatchCandidate(canonical_patch({}, files), files), provenance()
+        ))
+        status, document = self.request(
+            "POST", "/generations", generation_body("gen-http-large", run),
+            {"Idempotency-Key": "generation-http-large"},
+        )
+        self.assertEqual(status, 422)
+        self.assertIn("generation candidate failed service validation", document["error"])
+
     def test_generation_rejects_caller_supplied_output(self):
         run = self.prepare_coding()
         body = generation_body("gen-http-output", run)

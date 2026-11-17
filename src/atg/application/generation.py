@@ -11,6 +11,7 @@ from typing import Mapping
 from atg.adapters.generation.deterministic import DeterministicValidationAdapter
 from atg.domain.digests import digests_equal, require_sha256_digest
 from atg.domain.generation import (
+    MAX_GENERATION_PATCH_BYTES,
     artifact_digest,
     compute_materialized_digest,
     compute_patch_digest,
@@ -43,6 +44,10 @@ class GenerationAdapterUnavailableError(RuntimeError):
     """Raised when no generation provider is configured in the composition."""
 
 
+class GenerationCandidateInvalidError(ValueError):
+    """Raised when an adapter returns candidate content outside service bounds."""
+
+
 @dataclass(frozen=True)
 class GenerationRequest:
     """Intent-only request; generated content and provenance come from the port."""
@@ -61,6 +66,8 @@ class GenerationRequest:
         """Validate intent identities; do not accept model/tool output here."""
         for field in ("generation_id", "plan_id", "run_id", "idempotency_key"):
             validate_identifier(getattr(self, field), field)
+        if len(self.generation_id) > 232:
+            raise ValueError("generation_id exceeds the 232-character event-safe limit")
         if (
             not isinstance(self.expected_revision, int)
             or isinstance(self.expected_revision, bool)
@@ -284,8 +291,21 @@ class GenerationService:
                     raise GenerationConflictError("generation adapter returned an invalid candidate")
                 candidate = generated.patch
                 provenance = _validate_generation_provenance(generated, request)
-                _validate_materialized_files(candidate.materialized_files)
-                _validate_materialized_files(candidate.base_files, allow_empty=True)
+                try:
+                    if not isinstance(candidate, PatchCandidate):
+                        raise ValueError("generation adapter returned an invalid patch candidate")
+                    if not isinstance(candidate.patch_text, str):
+                        raise ValueError("generated patch must be text")
+                    if len(candidate.patch_text.encode()) > MAX_GENERATION_PATCH_BYTES:
+                        raise ValueError(
+                            f"generated patch exceeds the {MAX_GENERATION_PATCH_BYTES}-byte limit"
+                        )
+                    _validate_materialized_files(candidate.materialized_files)
+                    _validate_materialized_files(candidate.base_files, allow_empty=True)
+                except (TypeError, ValueError) as exc:
+                    raise GenerationCandidateInvalidError(
+                        f"generation candidate failed service validation: {exc}"
+                    ) from exc
                 final_candidate = candidate
                 final_provenance = provenance
                 patch_digest = compute_patch_digest(candidate.patch_text)

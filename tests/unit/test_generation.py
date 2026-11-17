@@ -14,6 +14,7 @@ from atg.adapters.repository.local import LocalRepositoryContextAdapter
 from atg.application.analysis import AnalysisService
 from atg.application.generation import (
     GenerationAdapterUnavailableError,
+    GenerationCandidateInvalidError,
     GenerationConflictError,
     GenerationRecord,
     GenerationRequest,
@@ -153,6 +154,33 @@ def request(state, generation_id="generation-1", key="generation-key", endpoint=
 
 
 class GenerationServiceTests(unittest.TestCase):
+    def test_generation_id_is_limited_to_event_safe_length(self):
+        state = type("State", (), {"revision": 0})()
+        valid = replace(request(state), generation_id="g" * 232)
+        self.assertEqual(len(valid.generation_id + "-generation_inconclusive"), 256)
+        with self.assertRaisesRegex(ValueError, "232-character event-safe limit"):
+            replace(request(state), generation_id="g" * 233)
+
+    def test_oversized_adapter_output_fails_with_generation_error(self):
+        with TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            create_repository(root)
+            store, _ = prepare_coding_store(root)
+            valid = candidate()
+            oversized_patch = PatchCandidate(
+                "x" * 5_000_001, valid.materialized_files
+            )
+            req = request(store.get_run("run-1"))
+            with self.assertRaisesRegex(
+                GenerationCandidateInvalidError, "generated patch exceeds"
+            ):
+                generation_service(store, (generated(oversized_patch),)).generate(req)
+            self.assertEqual(
+                store.get_generation_attempts(req.generation_id, req.digest()),
+                ((), ()),
+            )
+            store.close()
+
     def test_empty_subject_version_is_rejected_before_generation_starts(self):
         state = type("State", (), {"revision": 0})()
         with self.assertRaisesRegex(ValueError, "base.version"):

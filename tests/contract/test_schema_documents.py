@@ -104,6 +104,16 @@ class ContractSchemaTests(unittest.TestCase):
         ]
         self.assertTrue(path_errors, "traversal fixture must fail the generated-path pattern")
 
+    def test_generation_schema_enforces_event_safe_generation_id_length(self):
+        validator = self._validator("generation")
+        generation = self._load("examples", "generation.json")
+        generation["generation_id"] = "g" * 233
+        errors = [
+            error for error in validator.iter_errors(generation)
+            if list(error.absolute_path) == ["generation_id"]
+        ]
+        self.assertTrue(errors, "generation IDs must leave room for terminal event suffixes")
+
     def test_analysis_gate_events_require_reasons(self):
         event = self._load("examples", "run-event-checkpoint.json")
         for event_type in ("analysis_blocked", "analysis_inconclusive"):

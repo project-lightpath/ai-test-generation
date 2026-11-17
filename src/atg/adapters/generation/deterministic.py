@@ -16,6 +16,7 @@ from pathlib import Path
 
 from atg.domain.digests import digests_equal
 from atg.domain.generation import (
+    MAX_GENERATION_PATCH_BYTES,
     compute_materialized_digest,
     compute_patch_digest,
     validate_candidate_paths,
@@ -87,7 +88,7 @@ class DeterministicValidationAdapter:
 class FilesystemPatchMaterializer:
     """Write generated tests safely into a configured isolated workspace."""
 
-    MAX_PATCH_BYTES = 5_000_000
+    MAX_PATCH_BYTES = MAX_GENERATION_PATCH_BYTES
     MAX_FILE_BYTES = 1_000_000
     MAX_TOTAL_BYTES = 5_000_000
 

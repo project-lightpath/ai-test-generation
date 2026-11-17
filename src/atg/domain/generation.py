@@ -18,6 +18,7 @@ _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _GENERATION_CHECKS = frozenset({
     "approved_path", "syntax", "format", "compile", "collection", "assertion", "target",
 })
+MAX_GENERATION_PATCH_BYTES = 5_000_000
 _MAX_CHANGED_FILES = 10
 
 
