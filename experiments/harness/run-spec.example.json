@@ -1,0 +1,19 @@
+{
+  "schema": "flpath-5050.run-spec.v1",
+  "profile": "spring-transfer",
+  "candidates": [
+    "aider",
+    "pydantic-ai",
+    "claude-code",
+    "langgraph"
+  ],
+  "model_id": "rits/zai-org/glm-5-3",
+  "endpoint_id": "enmaas-devshift",
+  "timeouts_seconds": {
+    "analysis": 600,
+    "plan": 600,
+    "code": 600,
+    "execute": 3900
+  },
+  "external_candidates": []
+}

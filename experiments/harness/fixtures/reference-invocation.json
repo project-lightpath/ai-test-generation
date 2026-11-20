@@ -1,0 +1,10 @@
+{
+  "candidate": "reference-fixture",
+  "tool_version": "1",
+  "model_id": "none",
+  "endpoint_id": "none",
+  "redacted_command": [],
+  "prompt_sha256": null,
+  "config_sha256": null,
+  "tool_source_revision": null
+}

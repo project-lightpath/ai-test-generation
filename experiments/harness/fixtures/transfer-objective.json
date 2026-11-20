@@ -1,0 +1,39 @@
+{
+  "kind": "atg.fake-model-replay",
+  "version": "1",
+  "run_id": "flpath-5050-quarkus-transfer-001",
+  "fixture": {
+    "repository": "https://github.com/project-lightpath/java-analysis-adapter",
+    "revision": "2aac181ae63d938c118bac133d33fb8ae19eeec9",
+    "project_path": "spike/java21-quarkus",
+    "java_release": 21,
+    "quarkus_version": "3.40.1"
+  },
+  "objective": {
+    "id": "transfer-accepted-response",
+    "statement": "Check that a valid transfer request returns an accepted response and preserves its request reference.",
+    "request_reference": "flpath-5050-replay-001",
+    "expected": {
+      "status_code": 200,
+      "accepted": true,
+      "path": "resource->service->auth->target"
+    }
+  },
+  "plan": {
+    "id": "transfer-accepted-response-plan",
+    "status": "synthetic_replay_input",
+    "steps": [
+      "POST a valid transfer request to /transfers.",
+      "Assert the HTTP status and the three expected response fields."
+    ]
+  },
+  "model": {
+    "id": "deterministic-fake",
+    "version": "1",
+    "config": "fixed-response-file"
+  },
+  "generated_test": {
+    "path": "src/test/java/com/projectlightpath/fixture/TransferGeneratedReplayTest.java",
+    "source_file": "TransferGeneratedReplayTest.java"
+  }
+}

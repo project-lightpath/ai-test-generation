@@ -1,0 +1,33 @@
+{
+  "candidate": "aider",
+  "config_sha256": "sha256:ba2fd4f96f227918268244d916ab59286ef97f99238904f1867c145b17b4f4a3",
+  "endpoint_id": "enmaas-devshift",
+  "model_id": "rits/zai-org/glm-5-3",
+  "prompt_sha256": "sha256:b433ea91f94e46ab00a36f25a435b8471ebad93ce8d0113651678be49c1e3c02",
+  "redacted_command": [
+    "podman",
+    "run",
+    "quay.io/sscdemo/ai-agent-maven-aider:v1.0.1",
+    "aider",
+    "--model",
+    "openai/rits/zai-org/glm-5-3",
+    "--yes-always",
+    "--no-auto-commits",
+    "--no-git",
+    "--no-check-update",
+    "--no-show-model-warnings",
+    "--message-file",
+    "objective.md",
+    "--read",
+    "src/main/java/com/projectlightpath/fixture/api/TransferResource.java",
+    "--read",
+    "src/main/java/com/projectlightpath/fixture/service/DefaultTransferService.java",
+    "--read",
+    "src/main/java/com/projectlightpath/fixture/target/UserAuthPublicKey.java",
+    "--read",
+    "src/test/java/com/projectlightpath/fixture/TransferResourceTest.java",
+    "OPENAI_API_KEY=[REDACTED]"
+  ],
+  "tool_source_revision": "80d5a7e0cbd074f9b76c7f0db7441404521055268e3ba7d04df5d1bd2e91b456",
+  "tool_version": "0.86.2"
+}

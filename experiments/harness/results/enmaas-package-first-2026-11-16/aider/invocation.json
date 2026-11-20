@@ -1,0 +1,31 @@
+{
+  "candidate": "aider",
+  "config_sha256": "sha256:6287e6054c0debb4788d3f35bcea55aef981b745784c61c78493cf19f1d14f5e",
+  "endpoint_id": "enmaas-rhdp",
+  "model_id": "gpt-oss-120b",
+  "prompt_sha256": "sha256:b433ea91f94e46ab00a36f25a435b8471ebad93ce8d0113651678be49c1e3c02",
+  "redacted_command": [
+    "podman",
+    "run",
+    "quay.io/sscdemo/ai-agent-maven-aider:v1.0.1",
+    "aider",
+    "--model",
+    "openai/gpt-oss-120b",
+    "--yes-always",
+    "--no-auto-commits",
+    "--no-git",
+    "--message-file",
+    "objective.md",
+    "--read",
+    "TransferResource.java",
+    "--read",
+    "DefaultTransferService.java",
+    "--read",
+    "UserAuthPublicKey.java",
+    "--read",
+    "TransferResourceTest.java",
+    "OPENAI_API_KEY=[REDACTED]"
+  ],
+  "tool_source_revision": "sha256:80d5a7e0cbd074f9b76c7f0db7441404521055268e3ba7d04df5d1bd2e91b456",
+  "tool_version": "0.86.2"
+}

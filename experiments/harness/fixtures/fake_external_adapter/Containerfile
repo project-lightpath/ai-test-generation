@@ -1,0 +1,6 @@
+FROM docker.io/library/python@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+COPY adapter.py /adapter
+COPY analysis.json /opt/fake-fixture/analysis.json
+COPY plan.json /opt/fake-fixture/plan.json
+COPY TransactionServiceFullBalanceTransferTest.java /opt/fake-fixture/TransactionServiceFullBalanceTransferTest.java
+RUN chmod 0555 /adapter

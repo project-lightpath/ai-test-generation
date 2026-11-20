@@ -1,0 +1,119 @@
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------< org.projectlightpath:java21-quarkus-readiness-fixture >--------
+[INFO] Building FLPATH-5000 Java 21 Quarkus readiness fixture 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- build-helper:3.6.0:add-source (add-generated-source-root) @ java21-quarkus-readiness-fixture ---
+[INFO] Source directory: /workspace/generated-src/main/java added.
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ java21-quarkus-readiness-fixture ---
+[INFO] Copying 2 resources from src/main/resources to target/classes
+[INFO] 
+[INFO] --- quarkus:3.40.1:generate-code (default) @ java21-quarkus-readiness-fixture ---
+[INFO] 
+[INFO] --- compiler:3.13.0:compile (default-compile) @ java21-quarkus-readiness-fixture ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- quarkus:3.40.1:generate-code-tests (default) @ java21-quarkus-readiness-fixture ---
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ java21-quarkus-readiness-fixture ---
+[INFO] skip non existing resourceDirectory /workspace/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.13.0:testCompile (default-testCompile) @ java21-quarkus-readiness-fixture ---
+[INFO] Nothing to compile - all classes are up to date.
+[INFO] 
+[INFO] --- surefire:3.2.5:test (default-test) @ java21-quarkus-readiness-fixture ---
+[INFO] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[INFO] 
+[INFO] -------------------------------------------------------
+[INFO]  T E S T S
+[INFO] -------------------------------------------------------
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+[INFO] Running com.projectlightpath.fixture.TransferResourceEmptyUserTest
+Nov 18, 2026 3:11:39 PM io.quarkus.bootstrap.runner.Timing printStartupTime
+INFO: java21-quarkus-readiness-fixture 0.1.0-SNAPSHOT on JVM (powered by Quarkus 3.40.1) started in 6.712s. Listening on: http://localhost:33745
+Nov 18, 2026 3:11:39 PM io.quarkus.bootstrap.runner.Timing printStartupTime
+INFO: Profile test activated. 
+Nov 18, 2026 3:11:39 PM io.quarkus.bootstrap.runner.Timing printStartupTime
+INFO: Installed features: [cdi, rest, rest-jackson, smallrye-context-propagation, vertx]
+Nov 18, 2026 3:11:41 PM org.jboss.logmanager.JBossLoggerFinder getLogger
+ERROR: The LogManager accessed before the "java.util.logging.manager" system property was set to "org.jboss.logmanager.LogManager". Results may be unexpected.
+Request method:	POST
+Request URI:	http://localhost:33745/transfers
+Proxy:			<none>
+Request params:	<none>
+Query params:	<none>
+Form params:	<none>
+Path params:	<none>
+Headers:		Accept=*/*
+				Content-Type=application/json
+Cookies:		<none>
+Multiparts:		<none>
+Body:
+{
+    "requestReference": "req-002",
+    "user": ""
+}
+
+HTTP/1.1 200 OK
+content-length: 87
+Content-Type: application/json;charset=UTF-8
+
+{
+    "requestReference": "req-002",
+    "accepted": true,
+    "path": "resource->service->auth->target"
+}
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 4.493 s <<< FAILURE! -- in com.projectlightpath.fixture.TransferResourceEmptyUserTest
+[ERROR] com.projectlightpath.fixture.TransferResourceEmptyUserTest.rejectsTransferWhenUserIsEmpty -- Time elapsed: 3.593 s <<< FAILURE!
+java.lang.AssertionError: 
+1 expectation failed.
+JSON path accepted doesn't match.
+Expected: is <false>
+  Actual: <true>
+
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:344)
+	at io.restassured.internal.ResponseSpecificationImpl$HamcrestAssertionClosure.validate(ResponseSpecificationImpl.groovy:516)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:344)
+	at io.restassured.internal.ResponseSpecificationImpl.validateResponseIfRequired(ResponseSpecificationImpl.groovy:714)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:344)
+	at io.restassured.internal.ResponseSpecificationImpl.body(ResponseSpecificationImpl.groovy:274)
+	at org.codehaus.groovy.vmplugin.v8.IndyInterface.fromCache(IndyInterface.java:344)
+	at io.restassured.internal.ResponseSpecificationImpl.body(ResponseSpecificationImpl.groovy:121)
+	at io.restassured.internal.ValidatableResponseOptionsImpl.body(ValidatableResponseOptionsImpl.java:244)
+	at com.projectlightpath.fixture.TransferResourceEmptyUserTest.rejectsTransferWhenUserIsEmpty(TransferResourceEmptyUserTest.java:23)
+
+Nov 18, 2026 3:11:43 PM io.quarkus.bootstrap.runner.Timing printStopTime
+INFO: java21-quarkus-readiness-fixture stopped in 0.045s
+[INFO] 
+[INFO] Results:
+[INFO] 
+[ERROR] Failures: 
+[ERROR]   TransferResourceEmptyUserTest.rejectsTransferWhenUserIsEmpty:23 1 expectation failed.
+JSON path accepted doesn't match.
+Expected: is <false>
+  Actual: <true>
+
+[INFO] 
+[ERROR] Tests run: 1, Failures: 1, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  21.804 s
+[INFO] Finished at: 2026-11-18T15:11:43Z
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test (default-test) on project java21-quarkus-readiness-fixture: There are test failures.
+[ERROR] 
+[ERROR] Please refer to /workspace/target/surefire-reports for the individual test results.
+[ERROR] Please refer to dump files (if any exist) [date].dump, [date]-jvmRun[N].dump and [date].dumpstream.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

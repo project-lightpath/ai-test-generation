@@ -1,0 +1,20 @@
+{
+  "candidate": "pydantic-ai",
+  "config_sha256": "sha256:95efdc820c3022d7084cc63a6cbaeb46dfc954d69fbe7d8814fc57cecb5e8c23",
+  "endpoint_id": "enmaas-rhdp",
+  "model_id": "gpt-oss-120b",
+  "prompt_sha256": "sha256:b433ea91f94e46ab00a36f25a435b8471ebad93ce8d0113651678be49c1e3c02",
+  "redacted_command": [
+    "python3",
+    "adapter.py",
+    "--fixture-root",
+    "/fixture",
+    "--objective",
+    "/objective.md",
+    "--output-dir",
+    "/work/candidate-run-002",
+    "ENMAAS_API_KEY=[REDACTED]"
+  ],
+  "tool_source_revision": "sha256:93f3d5c6c945ebd11e0c286c798e478029666b53a8a89cb96b1ea0201f493223",
+  "tool_version": "2.68.0"
+}

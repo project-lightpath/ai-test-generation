@@ -1,0 +1,43 @@
+Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------< org.projectlightpath:java21-quarkus-readiness-fixture >--------
+[INFO] Building FLPATH-5000 Java 21 Quarkus readiness fixture 0.1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- build-helper:3.6.0:add-source (add-generated-source-root) @ java21-quarkus-readiness-fixture ---
+[INFO] Source directory: /workspace/generated-src/main/java added.
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ java21-quarkus-readiness-fixture ---
+[INFO] Copying 2 resources from src/main/resources to target/classes
+[INFO] 
+[INFO] --- quarkus:3.40.1:generate-code (default) @ java21-quarkus-readiness-fixture ---
+[INFO] 
+[INFO] --- compiler:3.13.0:compile (default-compile) @ java21-quarkus-readiness-fixture ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 16 source files with javac [debug release 21] to target/classes
+[INFO] 
+[INFO] --- quarkus:3.40.1:generate-code-tests (default) @ java21-quarkus-readiness-fixture ---
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ java21-quarkus-readiness-fixture ---
+[INFO] skip non existing resourceDirectory /workspace/src/test/resources
+[INFO] 
+[INFO] --- compiler:3.13.0:testCompile (default-testCompile) @ java21-quarkus-readiness-fixture ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 2 source files with javac [debug release 21] to target/test-classes
+[INFO] 
+[INFO] --- surefire:3.2.5:test (default-test) @ java21-quarkus-readiness-fixture ---
+[INFO] Tests are skipped.
+[INFO] 
+[INFO] --- jar:3.4.1:jar (default-jar) @ java21-quarkus-readiness-fixture ---
+[INFO] Building jar: /workspace/target/java21-quarkus-readiness-fixture-0.1.0-SNAPSHOT.jar
+[INFO] 
+[INFO] --- quarkus:3.40.1:build (default) @ java21-quarkus-readiness-fixture ---
+[INFO] [io.quarkus.deployment.QuarkusAugmentor] Quarkus augmentation completed in 5409ms
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  16.212 s
+[INFO] Finished at: 2026-11-18T15:10:13Z
+[INFO] ------------------------------------------------------------------------
