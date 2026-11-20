@@ -1,0 +1,25 @@
+{
+  "base_url": "https://api.enmaas.devshift.net",
+  "candidate": "claude-code",
+  "credential": "[REDACTED]",
+  "endpoint_id": "enmaas-devshift",
+  "flags": [
+    "--bare",
+    "--permission-mode",
+    "acceptEdits",
+    "--allowedTools",
+    "Read,Write,Edit,Glob,Grep",
+    "--max-turns",
+    "8"
+  ],
+  "model_id": "rits/zai-org/glm-5-3",
+  "prompt_wrapper": "Read objective.md and the four Java source files in this workspace. Follow the objective exactly: create one new native Java test under src/test/java. Do not change existing files or run commands. Return the new path.",
+  "prompt_wrapper_sha256": "sha256:55b8749f8a21c97da7d7ecc0d30d3f86e38252fb8bb4e959410bfa8063cf2627",
+  "source_context": {
+    "src/main/java/com/projectlightpath/fixture/api/TransferResource.java": "sha256:60507041c60bbc7807e101e7ab0d2aee2d87a37f011d3dadf8d036e476327cf0",
+    "src/main/java/com/projectlightpath/fixture/service/DefaultTransferService.java": "sha256:d085f4a46e57f463f7ab4668b428b841aee22fcf8c302a20020ea2ace80ca18b",
+    "src/main/java/com/projectlightpath/fixture/target/UserAuthPublicKey.java": "sha256:9c9467461e5858c62de334f785b8309acbd1e55a32818aa454fe80b6890ce921",
+    "src/test/java/com/projectlightpath/fixture/TransferResourceTest.java": "sha256:997b18d5278d83bd285ba1cca094559f599f30b44e5c931454f182299786fdfb"
+  },
+  "tool_version": "2.1.296"
+}

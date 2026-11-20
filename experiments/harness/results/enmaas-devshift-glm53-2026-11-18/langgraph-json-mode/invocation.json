@@ -1,0 +1,27 @@
+{
+  "base_url": "https://api.enmaas.devshift.net/v1",
+  "candidate": "langgraph",
+  "config_sha256": "sha256:4b348aa0ed2350baaad3c2df61b873ef96e4df4d69b052b39599b0fdb7333469",
+  "endpoint_id": "enmaas-devshift",
+  "model_id": "rits/zai-org/glm-5-3",
+  "prompt_sha256": "sha256:b433ea91f94e46ab00a36f25a435b8471ebad93ce8d0113651678be49c1e3c02",
+  "redacted_command": [
+    "python3",
+    "adapter.py",
+    "--fixture-root",
+    "/fixture",
+    "--objective",
+    "/objective.md",
+    "--output-dir",
+    "/work/candidate-run-001",
+    "--base-url",
+    "https://api.enmaas.devshift.net/v1",
+    "--model-id",
+    "rits/zai-org/glm-5-3",
+    "--endpoint-id",
+    "enmaas-devshift",
+    "ENMAAS_API_KEY=[REDACTED]"
+  ],
+  "tool_source_revision": "sha256:f28a7ddbf578687e7ecc00ca2816f59e162f4aa67dbdfb4baf3f8a3647d88bca",
+  "tool_version": "1.0.8"
+}

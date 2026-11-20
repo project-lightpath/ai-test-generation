@@ -10,6 +10,7 @@ The current SSC demo and any forks are temporary development and compatibility m
 
 ## Start Here
 
+- [FLPATH-5050 candidate conclusion](experiments/harness/FLPATH-5050-conclusion.md) - evaluation results, limits, and next steps.
 - `CONTRIBUTING.md` - contributor workflow and boundary rules.
 - `docs/architecture/repository-layout.md` - workstream-to-path integration map.
 - `docs/contributor/parallel-paths.md` - where each parallel workstream places changes.

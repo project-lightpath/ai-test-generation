@@ -1,0 +1,11 @@
+{
+  "candidate": "manual-reference",
+  "endpoint_id": "none",
+  "model_id": "none",
+  "prompt_sha256": "sha256:990f24e23db39120e07aff3d28b2fe8297c83540ecd7dd836e73984265846313",
+  "redacted_command": [
+    "human-authored-reference-test"
+  ],
+  "tool_source_revision": "FLPATH-5050 Spring exact-balance control",
+  "tool_version": "1"
+}

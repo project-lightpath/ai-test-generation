@@ -1,0 +1,24 @@
+{
+  "candidate": "pydantic-ai",
+  "config_sha256": "sha256:7e1f460d0146af3d0c40e6513397be83a1c0b2f7815ba4c367c846cbecc0b451",
+  "endpoint_id": "enmaas-devshift",
+  "model_id": "rits/zai-org/glm-5-3",
+  "prompt_sha256": "sha256:b433ea91f94e46ab00a36f25a435b8471ebad93ce8d0113651678be49c1e3c02",
+  "redacted_command": [
+    "python3",
+    "adapter.py",
+    "--fixture-root",
+    "/fixture",
+    "--objective",
+    "/objective.md",
+    "--output-dir",
+    "/work/candidate-run-001",
+    "--base-url",
+    "https://api.enmaas.devshift.net/v1",
+    "--model-id",
+    "rits/zai-org/glm-5-3",
+    "ENMAAS_API_KEY=[REDACTED]"
+  ],
+  "tool_source_revision": "sha256:c1427f83b1bafa2bcfeef7728d96400a4a6d7b673536375de47626497b0bd532",
+  "tool_version": "2.68.0"
+}

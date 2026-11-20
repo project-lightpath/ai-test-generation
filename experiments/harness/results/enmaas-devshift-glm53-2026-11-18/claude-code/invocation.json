@@ -1,0 +1,26 @@
+{
+  "candidate": "claude-code",
+  "config_sha256": "sha256:4de6ea1a2bfc4cfd31084e80b58dd61fb41bf225631327c0cf7109c7c37b547e",
+  "endpoint_id": "enmaas-devshift",
+  "model_id": "rits/zai-org/glm-5-3",
+  "prompt_sha256": "sha256:b433ea91f94e46ab00a36f25a435b8471ebad93ce8d0113651678be49c1e3c02",
+  "redacted_command": [
+    "claude",
+    "-p",
+    "Read objective.md and the four Java source files in this workspace. Follow the objective exactly: create one new native Java test under src/test/java. Do not change existing files or run commands. Return the new path.",
+    "--bare",
+    "--model",
+    "rits/zai-org/glm-5-3",
+    "--permission-mode",
+    "acceptEdits",
+    "--allowedTools",
+    "Read,Write,Edit,Glob,Grep",
+    "--max-turns",
+    "8",
+    "--output-format",
+    "json",
+    "ANTHROPIC_API_KEY=[REDACTED]"
+  ],
+  "tool_source_revision": "sha256:24972e3bc859fab2b46ed4c1e51f7d6130f06d3bd550811a114640de3370d0de",
+  "tool_version": "2.1.296"
+}
