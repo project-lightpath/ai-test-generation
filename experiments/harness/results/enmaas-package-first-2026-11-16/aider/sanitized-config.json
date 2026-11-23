@@ -1,0 +1,20 @@
+{
+  "auto_commits": false,
+  "base_url": "https://maas-rhdp.apps.maas.redhatworkshops.io/v1",
+  "candidate": "aider",
+  "credential": "[REDACTED]",
+  "endpoint_id": "enmaas-rhdp",
+  "git": "disabled",
+  "image": "quay.io/sscdemo/ai-agent-maven-aider:v1.0.1",
+  "image_id": "sha256:80d5a7e0cbd074f9b76c7f0db7441404521055268e3ba7d04df5d1bd2e91b456",
+  "message_file": "objective.md",
+  "model_id": "gpt-oss-120b",
+  "network": "host",
+  "read_only_context": [
+    "src/main/java/com/projectlightpath/fixture/api/TransferResource.java",
+    "src/main/java/com/projectlightpath/fixture/service/DefaultTransferService.java",
+    "src/main/java/com/projectlightpath/fixture/target/UserAuthPublicKey.java",
+    "src/test/java/com/projectlightpath/fixture/TransferResourceTest.java"
+  ],
+  "tool_version": "0.86.2"
+}

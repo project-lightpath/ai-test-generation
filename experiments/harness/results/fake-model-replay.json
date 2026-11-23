@@ -1,0 +1,66 @@
+{
+  "fixture": {
+    "java_release": 21,
+    "quarkus_version": "3.40.1",
+    "repository": "https://github.com/project-lightpath/java-analysis-adapter",
+    "revision": "2aac181ae63d938c118bac133d33fb8ae19eeec9",
+    "tree_digest": "sha256:5e19aa18e2019ecf9fe2559648002bac97467da685f5ef3fb4eefa0251080efe"
+  },
+  "generated_test": {
+    "digest": "sha256:60679d1eb7204d4b6e710ee67d1d38b190a28d9ff3b22e40377c6bab40a8f0be",
+    "path": "src/test/java/com/projectlightpath/fixture/TransferGeneratedReplayTest.java"
+  },
+  "harness_digest": "sha256:46f8764121a7ea9d5443042248df2db24e192ec8a434c233b75d7c4b8a9aa890",
+  "input_digest": "sha256:4810635a902eac0fd397209fbd07986c6cd85a3a8eb400260ecb6519c30b4d76",
+  "limitations": [
+    "The analysis and plan are fixed synthetic inputs, not live ATG stages or human approval.",
+    "The fake model is a recorded deterministic response; no real model endpoint was called.",
+    "Execution evidence must be recorded separately; generation alone is not a test pass or vulnerability proof."
+  ],
+  "model": {
+    "config": "fixed-response-file",
+    "config_digest": "sha256:856fbc421dc4cb5cf98585ad220d29bd70f1f01f9f8ddb497f695bf6b7c7dee3",
+    "id": "deterministic-fake",
+    "response_digest": "sha256:60679d1eb7204d4b6e710ee67d1d38b190a28d9ff3b22e40377c6bab40a8f0be",
+    "version": "1"
+  },
+  "objective": {
+    "expected": {
+      "accepted": true,
+      "path": "resource->service->auth->target",
+      "status_code": 200
+    },
+    "id": "transfer-accepted-response",
+    "request_reference": "flpath-5050-replay-001",
+    "statement": "Check that a valid transfer request returns an accepted response and preserves its request reference."
+  },
+  "plan": {
+    "id": "transfer-accepted-response-plan",
+    "status": "synthetic_replay_input",
+    "steps": [
+      "POST a valid transfer request to /transfers.",
+      "Assert the HTTP status and the three expected response fields."
+    ]
+  },
+  "record_type": "atg.fake-model-replay",
+  "run_id": "flpath-5050-quarkus-transfer-001",
+  "stages": [
+    {
+      "stage": "analyze",
+      "status": "replayed"
+    },
+    {
+      "stage": "plan",
+      "status": "synthetic_replay_input"
+    },
+    {
+      "stage": "code",
+      "status": "generated"
+    },
+    {
+      "stage": "execute",
+      "status": "not_run"
+    }
+  ],
+  "version": "1"
+}

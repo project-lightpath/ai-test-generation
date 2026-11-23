@@ -1,0 +1,28 @@
+{
+  "adapter_sha256": "sha256:dc17247823c450c980c77f7ef12c00826ba1ed0f394afa9fee3971ecf48b98ff",
+  "base_url": "https://api.enmaas.devshift.net/v1",
+  "candidate": "langgraph",
+  "credential": "[REDACTED]",
+  "endpoint_id": "enmaas-devshift",
+  "graph_nodes": [
+    "generate",
+    "validate"
+  ],
+  "model_client": "openai.OpenAI",
+  "model_client_version": "2.8.1",
+  "model_id": "rits/zai-org/glm-5-3",
+  "provider": "openai-compatible",
+  "request_limits": {
+    "max_retries": 0,
+    "max_tokens": 16384,
+    "timeout_seconds": 300
+  },
+  "response_mode": "required create_test function call",
+  "source_context": {
+    "src/main/java/com/projectlightpath/fixture/api/TransferResource.java": "sha256:60507041c60bbc7807e101e7ab0d2aee2d87a37f011d3dadf8d036e476327cf0",
+    "src/main/java/com/projectlightpath/fixture/service/DefaultTransferService.java": "sha256:d085f4a46e57f463f7ab4668b428b841aee22fcf8c302a20020ea2ace80ca18b",
+    "src/main/java/com/projectlightpath/fixture/target/UserAuthPublicKey.java": "sha256:9c9467461e5858c62de334f785b8309acbd1e55a32818aa454fe80b6890ce921",
+    "src/test/java/com/projectlightpath/fixture/TransferResourceTest.java": "sha256:997b18d5278d83bd285ba1cca094559f599f30b44e5c931454f182299786fdfb"
+  },
+  "tool_version": "1.0.8"
+}

@@ -1,0 +1,59 @@
+{
+  "record_type": "atg.fake-model-replay.execution",
+  "version": "1",
+  "run_id": "flpath-5050-quarkus-transfer-001",
+  "source": {
+    "atg_repository": "https://github.com/project-lightpath/ai-test-generation",
+    "atg_base_revision": "6d6d63b3e5c924e37ca68b263bc1b6248b3755bc",
+    "fixture_repository": "https://github.com/project-lightpath/java-analysis-adapter",
+    "fixture_revision": "2aac181ae63d938c118bac133d33fb8ae19eeec9",
+    "fixture_tree_digest": "sha256:5e19aa18e2019ecf9fe2559648002bac97467da685f5ef3fb4eefa0251080efe"
+  },
+  "harness_digest": "sha256:46f8764121a7ea9d5443042248df2db24e192ec8a434c233b75d7c4b8a9aa890",
+  "input_digest": "sha256:4810635a902eac0fd397209fbd07986c6cd85a3a8eb400260ecb6519c30b4d76",
+  "model": {
+    "id": "deterministic-fake",
+    "version": "1",
+    "config_digest": "sha256:856fbc421dc4cb5cf98585ad220d29bd70f1f01f9f8ddb497f695bf6b7c7dee3",
+    "response_digest": "sha256:60679d1eb7204d4b6e710ee67d1d38b190a28d9ff3b22e40377c6bab40a8f0be"
+  },
+  "generated_test": {
+    "path": "src/test/java/com/projectlightpath/fixture/TransferGeneratedReplayTest.java",
+    "digest": "sha256:60679d1eb7204d4b6e710ee67d1d38b190a28d9ff3b22e40377c6bab40a8f0be"
+  },
+  "execution": {
+    "status": "passed",
+    "command": ["mvn", "-o", "-B", "-ntp", "-Ptest", "test", "-f", "pom.xml"],
+    "working_directory": "/workspace",
+    "network": "disabled",
+    "runtime": {"name": "OpenJDK", "version": "21.0.9"},
+    "tool": {"name": "Apache Maven", "version": "3.9.11"},
+    "container_image": "docker.io/library/maven:3.9.11-eclipse-temurin-21",
+    "container_image_id": "sha256:b9611ad9b2f6ebef1c9369a32d794718fc28ebe2b9bb37b81a64b731370907bd",
+    "executed_at": "2026-11-12T16:39:22Z",
+    "exit_code": 0,
+    "tests": 2,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "setup_attempts": [
+    {
+      "status": "blocked_setup",
+      "reason": "The cold offline Maven cache lacked a test dependency; no tests ran."
+    },
+    {
+      "status": "failed_setup",
+      "reason": "An early generated workspace copy omitted a Java package named target. Compilation exposed the copy-filter bug before tests ran; the filter was narrowed and the source package was retained."
+    },
+    {
+      "status": "blocked_setup",
+      "reason": "The offline cache lacked the Surefire JUnit provider; it was cached before the final network-disabled execution."
+    }
+  ],
+  "limitations": [
+    "This is a normal behavior test, not a vulnerable-versus-fixed comparison.",
+    "Analysis and plan are fixed synthetic inputs, not live ATG stages or human approval.",
+    "The fake model is a recorded response; no approved model endpoint was tested."
+  ]
+}

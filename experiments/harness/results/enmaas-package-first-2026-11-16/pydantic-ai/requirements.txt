@@ -1,0 +1,1 @@
+pydantic-ai-slim[openai]==2.68.0

@@ -1,0 +1,11 @@
+{
+  "content_length": 0,
+  "finish_reason": "length",
+  "reasoning_content_length": 34466,
+  "usage": {
+    "completion_tokens": 8192,
+    "prompt_tokens": 1010,
+    "reasoning_tokens": 8192,
+    "total_tokens": 9202
+  }
+}
